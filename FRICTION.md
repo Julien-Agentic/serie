@@ -28,7 +28,8 @@ These block replacing VS Code's Git Graph.
 - ~~**Copy branch name.**~~ Not a friction: stock Serie already does this with
   `c` in the refs list.
 - **Automatic refresh.** `R` has to be pressed after every agent commit.
-- **Adjustable graph column width.**
+- **Adjustable graph column width.** *Fixed:* `<` and `>` narrow and widen the
+  graph column.
 - **Unified diff wrapping.** Long lines are clipped in the inline diff pane;
   side-by-side Delta remains the workaround.
 

@@ -33,6 +33,10 @@ pub enum AppEvent {
     SelectParentCommit,
     SwitchBranch(BranchTarget),
     SwitchBranchAtSelectedCommit,
+    ResizeGraph {
+        wider: bool,
+        steps: usize,
+    },
     CopyToClipboard {
         name: String,
         value: String,
@@ -237,6 +241,8 @@ pub enum UserEvent {
     MarkToggle,
     Refresh,
     SwitchBranch,
+    GraphNarrower,
+    GraphWider,
     ShortCopy,
     FullCopy,
     Unknown,
@@ -303,6 +309,8 @@ impl<'de> Deserialize<'de> for UserEvent {
                         "mark_toggle" => Ok(UserEvent::MarkToggle),
                         "refresh" => Ok(UserEvent::Refresh),
                         "switch_branch" => Ok(UserEvent::SwitchBranch),
+                        "graph_narrower" => Ok(UserEvent::GraphNarrower),
+                        "graph_wider" => Ok(UserEvent::GraphWider),
                         "short_copy" => Ok(UserEvent::ShortCopy),
                         "full_copy" => Ok(UserEvent::FullCopy),
                         _ => {
@@ -345,6 +353,8 @@ impl UserEvent {
                 | UserEvent::PageDown
                 | UserEvent::HalfPageUp
                 | UserEvent::HalfPageDown
+                | UserEvent::GraphNarrower
+                | UserEvent::GraphWider
         )
     }
 }

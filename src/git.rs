@@ -387,6 +387,32 @@ fn other_worktree_branches(worktrees: Vec<Worktree>, head: &Head) -> FxHashMap<S
         .collect()
 }
 
+// The number of graph lanes shown is remembered per repository in its git config,
+// which every worktree of the repository shares.
+const GRAPH_LANES_CONFIG_KEY: &str = "serie.graphLanes";
+
+/// The number of graph lanes to show, as saved by an earlier run.
+pub fn saved_graph_lanes(path: &Path) -> Option<usize> {
+    let value = run_git(path, &["config", "--get", GRAPH_LANES_CONFIG_KEY]).ok()?;
+    value.trim().parse().ok().filter(|lanes| *lanes > 0)
+}
+
+/// Remembers the number of graph lanes to show; `None` forgets it, so that
+/// every lane is shown again.
+pub fn save_graph_lanes(path: &Path, lanes: Option<usize>) -> std::result::Result<(), String> {
+    let key = GRAPH_LANES_CONFIG_KEY;
+    match lanes {
+        Some(lanes) => run_git(path, &["config", "--local", key, &lanes.to_string()]).map(|_| ()),
+        None => {
+            // Unsetting a key that is not set is an error for git.
+            if run_git(path, &["config", "--local", "--get", key]).is_err() {
+                return Ok(());
+            }
+            run_git(path, &["config", "--local", "--unset", key]).map(|_| ())
+        }
+    }
+}
+
 fn run_git(path: &Path, args: &[&str]) -> std::result::Result<String, String> {
     let output = Command::new("git")
         .args(args)
@@ -1055,6 +1081,34 @@ detached
             fs::read_to_string(path.join("file.txt")).unwrap(),
             "edited\n"
         );
+    }
+
+    #[test]
+    fn test_graph_lanes_are_saved_and_forgotten() {
+        let dir = repository_with_topic_branch();
+        let path = dir.path();
+        assert_eq!(saved_graph_lanes(path), None);
+        // forgetting when nothing is saved is not an error
+        save_graph_lanes(path, None).unwrap();
+
+        save_graph_lanes(path, Some(3)).unwrap();
+        assert_eq!(saved_graph_lanes(path), Some(3));
+        save_graph_lanes(path, Some(5)).unwrap();
+        assert_eq!(saved_graph_lanes(path), Some(5));
+
+        save_graph_lanes(path, None).unwrap();
+        assert_eq!(saved_graph_lanes(path), None);
+    }
+
+    #[test]
+    fn test_saved_graph_lanes_ignores_unusable_values() {
+        let dir = repository_with_topic_branch();
+        let path = dir.path();
+
+        git(path, &["config", "--local", "serie.graphLanes", "0"]);
+        assert_eq!(saved_graph_lanes(path), None);
+        git(path, &["config", "--local", "serie.graphLanes", "wide"]);
+        assert_eq!(saved_graph_lanes(path), None);
     }
 
     #[test]

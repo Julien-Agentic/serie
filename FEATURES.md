@@ -161,11 +161,24 @@ worktree picker.
 Stock Serie currently shows a changed-file summary, but has neither a selectable
 file list nor a built-in open-file shortcut.
 
-### Adjustable graph column width — Proposed
+### Adjustable graph column width — Implemented
 
-- Provide keybindings to increase and decrease the graph column width.
-- Let users balance graph readability against space for commit details, especially
-  in narrow terminals and split panes.
+- `<` narrows the graph column and `>` widens it, in the commit list. Both take
+  a count, as in `3<`.
+- Narrowing hides one lane from the right per press, until one is left. The
+  lanes that stay keep their size: the graph is cropped, never rescaled.
+  Widening shows one more lane, as far as the terminal has room for.
+- The status line reports the result, for example `Graph: 4 of 6 lanes`.
+- The chosen width survives refreshes and branch switches. If the graph later
+  outgrows the terminal, it is narrowed to fit.
+- The number of lanes shown is saved per repository and restored at the next
+  launch. It lives in the repository's git config as `serie.graphLanes`, so all
+  worktrees of the repository share it. Showing every lane again removes it.
+- A commit in a hidden lane shows no node on its row.
+
+**Not done:** narrowing automatically at startup when nothing is saved. Stock
+Serie still exits with "Terminal too small" when the full graph does not fit at
+launch.
 
 ### Unified diff wrapping — Proposed
 

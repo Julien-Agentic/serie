@@ -1,7 +1,7 @@
 use ratatui::crossterm::terminal;
 
 use crate::{
-    graph::{CellWidthType, Graph},
+    graph::{CellWidthType, Graph, GraphWidth},
     GraphWidthType, Result,
 };
 
@@ -11,6 +11,12 @@ pub fn decide_cell_width_type(
 ) -> Result<CellWidthType> {
     let (w, h) = terminal::size()?;
     decide_cell_width_type_from(graph.max_pos_x, w as usize, h as usize, cell_width_type)
+}
+
+/// Keeps a width chosen while running, narrowed if the graph has since outgrown the terminal.
+pub fn fit_graph_width(graph: &Graph, chosen: GraphWidth) -> Result<GraphWidth> {
+    let (w, _) = terminal::size()?;
+    Ok(chosen.fit(graph.max_pos_x + 1, w as usize))
 }
 
 fn decide_cell_width_type_from(

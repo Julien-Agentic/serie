@@ -28,6 +28,7 @@ The default key bindings can be overridden.
 | <kbd>Enter</kbd>                     | Show commit details<br>Apply search (if searching) | `confirm`                                    |
 | <kbd>Tab</kbd>                       | Open refs list                                     | `ref_list`                                   |
 | <kbd>Space</kbd>                     | Switch to the branch at the selected commit        | `switch_branch`                              |
+| <kbd>&lt;/&gt;</kbd>                 | Narrow/widen the graph column                      | `graph_narrower` `graph_wider`               |
 | <kbd>/</kbd>                         | Start search                                       | `search`                                     |
 | <kbd>Esc</kbd>                       | Cancel search                                      | `cancel`                                     |
 | <kbd>n/N</kbd>                       | Go to next/previous search match                   | `go_to_next` `go_to_previous`                |
@@ -80,6 +81,13 @@ without a local branch is offered too and creates a tracking local branch.
 A commit with no branch is left alone: Serie never detaches HEAD. In the
 commit detail, user command and help views, <kbd>Space</kbd> scrolls a page
 down as before.
+
+<kbd>&lt;</kbd> narrows the graph column by hiding one lane from the right,
+until one is left; the lanes that stay keep their size. <kbd>&gt;</kbd> shows
+one more lane, as far as the terminal has room for. Both take a count, as in
+<kbd>3</kbd><kbd>&lt;</kbd>. The number of lanes shown is remembered per
+repository, in its git config as `serie.graphLanes`, and shared by all of its
+worktrees.
 
 #### User Command
 

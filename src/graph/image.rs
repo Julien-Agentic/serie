@@ -87,12 +87,26 @@ impl<'a> GraphImageManager<'a> {
         self.graph
     }
 
-    pub fn graph_cell_width(&self) -> u16 {
-        let cell_count = (self.graph.max_pos_x + 1) as u16;
-        match self.cell_width_type {
-            CellWidthType::Double => cell_count * 2,
-            CellWidthType::Single => cell_count,
+    /// Draws only the leftmost lanes of the graph, to narrow the graph column.
+    pub fn with_max_lanes(mut self, max_lanes: Option<usize>) -> Self {
+        self.image_params.max_lanes = max_lanes;
+        self
+    }
+
+    pub fn graph_width(&self) -> GraphWidth {
+        GraphWidth {
+            cell_width_type: self.cell_width_type,
+            max_lanes: self.image_params.max_lanes,
         }
+    }
+
+    /// Number of lanes in the whole graph, drawn or not.
+    pub fn lane_count(&self) -> usize {
+        self.graph.max_pos_x + 1
+    }
+
+    pub fn graph_cell_width(&self) -> u16 {
+        self.graph_width().cell_width(self.lane_count()) as u16
     }
 
     pub fn image_ids(&self) -> &FxHashSet<u32> {
@@ -186,12 +200,94 @@ pub struct ImageParams {
     circle_edge_color: image::Rgba<u8>,
     background_color: image::Rgba<u8>,
     antialias: bool,
+    // lanes right of this many are cut off the row images
+    max_lanes: Option<usize>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CellWidthType {
     Double, // 2 cells
     Single,
+}
+
+/// How wide the graph column is drawn. Lanes keep their size; the column gets
+/// narrower by hiding lanes from the right.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GraphWidth {
+    pub cell_width_type: CellWidthType,
+    /// Number of lanes drawn, counted from the left. `None` draws them all.
+    pub max_lanes: Option<usize>,
+}
+
+impl GraphWidth {
+    // The graph column needs this many more terminal columns than its cells.
+    const MARGIN: usize = 2;
+
+    pub fn new(cell_width_type: CellWidthType) -> Self {
+        Self {
+            cell_width_type,
+            max_lanes: None,
+        }
+    }
+
+    /// Number of lanes drawn for a graph of `lane_count` lanes.
+    pub fn lanes(&self, lane_count: usize) -> usize {
+        self.max_lanes
+            .map_or(lane_count, |max| max.min(lane_count))
+            .max(1)
+    }
+
+    /// Width of the graph column in terminal cells.
+    pub fn cell_width(&self, lane_count: usize) -> usize {
+        match self.cell_width_type {
+            CellWidthType::Double => self.lanes(lane_count) * 2,
+            CellWidthType::Single => self.lanes(lane_count),
+        }
+    }
+
+    /// One lane narrower, or `None` when a single lane is left.
+    pub fn narrower(&self, lane_count: usize) -> Option<Self> {
+        let lanes = self.lanes(lane_count);
+        (lanes > 1).then(|| Self {
+            cell_width_type: self.cell_width_type,
+            max_lanes: Some(lanes - 1),
+        })
+    }
+
+    /// One lane wider, or `None` when every lane is already drawn or one more
+    /// does not fit in `term_width` columns.
+    pub fn wider(&self, lane_count: usize, term_width: usize) -> Option<Self> {
+        let lanes = self.lanes(lane_count);
+        if lanes >= lane_count {
+            return None;
+        }
+        let next = Self {
+            cell_width_type: self.cell_width_type,
+            max_lanes: (lanes + 1 < lane_count).then_some(lanes + 1),
+        };
+        (next.cell_width(lane_count) + Self::MARGIN <= term_width).then_some(next)
+    }
+
+    /// The same width, narrowed as far as needed to fit in `term_width` columns.
+    pub fn fit(mut self, lane_count: usize, term_width: usize) -> Self {
+        while self.cell_width(lane_count) + Self::MARGIN > term_width {
+            match self.narrower(lane_count) {
+                Some(narrower) => self = narrower,
+                None => break,
+            }
+        }
+        self
+    }
+
+    /// A short description for the status line.
+    pub fn describe(&self, lane_count: usize) -> String {
+        let lanes = self.lanes(lane_count);
+        if lanes < lane_count {
+            format!("Graph: {lanes} of {lane_count} lanes")
+        } else {
+            format!("Graph: all {lane_count} lanes")
+        }
+    }
 }
 
 impl ImageParams {
@@ -222,6 +318,7 @@ impl ImageParams {
             circle_edge_color,
             background_color,
             antialias,
+            max_lanes: None,
         }
     }
 
@@ -715,10 +812,7 @@ pub fn calc_graph_row_image(
             drawing_pixels,
             graph_style,
         );
-        return GraphRowImage {
-            bytes: build_image(&image, image_width, image_height),
-            cell_count,
-        };
+        return build_row_image(image, cell_count, image_params);
     }
 
     let mut img_buf = image::ImageBuffer::new(image_width, image_height);
@@ -743,9 +837,32 @@ pub fn calc_graph_row_image(
         }
     }
 
-    let bytes = build_image(&img_buf, image_width, image_height);
+    build_row_image(img_buf, cell_count, image_params)
+}
 
-    GraphRowImage { bytes, cell_count }
+// Encodes a drawn row, keeping only the lanes that fit in the graph column.
+fn build_row_image(
+    image: image::RgbaImage,
+    cell_count: usize,
+    image_params: &ImageParams,
+) -> GraphRowImage {
+    let height = image.height();
+    let visible = image_params
+        .max_lanes
+        .map_or(cell_count, |max| max.min(cell_count));
+    if visible < cell_count {
+        let width = u32::from(image_params.width) * visible as u32;
+        let image = image::imageops::crop_imm(&image, 0, 0, width, height).to_image();
+        GraphRowImage {
+            bytes: build_image(&image, width, height),
+            cell_count: visible,
+        }
+    } else {
+        GraphRowImage {
+            bytes: build_image(&image, image.width(), height),
+            cell_count,
+        }
+    }
 }
 
 fn draw_background(
@@ -1578,6 +1695,136 @@ mod tests {
                     (Right, 0, 6), (Horizontal, 1, 6), (Horizontal, 2, 6), (Horizontal, 3, 6), (Horizontal, 4, 6), (Horizontal, 5, 6), (RightBottom, 6, 6)]),
             (6, vec![(Vertical, 0, 0), (Vertical, 1, 1), (Vertical, 2, 2), (Vertical, 3, 3), (Vertical, 4, 4), (Vertical, 5, 5), (Down, 6, 6), (Up, 6, 6)]),
         ]
+    }
+
+    #[rstest]
+    fn test_calc_graph_row_image_keeps_leftmost_lanes(#[values(false, true)] antialias: bool) {
+        let graph_color_set = GraphColorSet::new(&GraphColorConfig::default());
+        let full_params = ImageParams::new(&graph_color_set, CellWidthType::Single, antialias);
+        let mut clipped_params =
+            ImageParams::new(&graph_color_set, CellWidthType::Single, antialias);
+        clipped_params.max_lanes = Some(3);
+        let mut drawing_pixels = DrawingPixels::new(&full_params);
+
+        // the commit is in a hidden lane, as are some of the edges
+        for (commit_pos_x, edges) in branches_test_params() {
+            let edges: Vec<Edge> = edges
+                .into_iter()
+                .map(|t| Edge::new(t.0, t.1, t.2))
+                .collect();
+            let mut row = |params: &ImageParams| {
+                let row = calc_graph_row_image(
+                    commit_pos_x,
+                    7,
+                    &edges,
+                    params,
+                    &mut drawing_pixels,
+                    GraphStyle::Rounded,
+                );
+                let image = image::load_from_memory(&row.bytes).unwrap().to_rgba8();
+                (row.cell_count, image)
+            };
+            let (full_cell_count, full) = row(&full_params);
+            let (clipped_cell_count, clipped) = row(&clipped_params);
+
+            assert_eq!(full_cell_count, 7);
+            assert_eq!(clipped_cell_count, 3);
+            let width = u32::from(full_params.width) * 3;
+            assert_eq!(clipped.dimensions(), (width, full.height()));
+            let expected = image::imageops::crop_imm(&full, 0, 0, width, full.height()).to_image();
+            assert_eq!(clipped, expected);
+        }
+    }
+
+    #[test]
+    fn test_calc_graph_row_image_narrower_than_limit_is_not_cropped() {
+        let graph_color_set = GraphColorSet::new(&GraphColorConfig::default());
+        let mut image_params = ImageParams::new(&graph_color_set, CellWidthType::Double, false);
+        image_params.max_lanes = Some(5);
+        let mut drawing_pixels = DrawingPixels::new(&image_params);
+        let edges = [Edge::new(Up, 0, 0), Edge::new(Down, 0, 0)];
+
+        let row = calc_graph_row_image(
+            0,
+            2,
+            &edges,
+            &image_params,
+            &mut drawing_pixels,
+            GraphStyle::Rounded,
+        );
+
+        assert_eq!(row.cell_count, 2);
+    }
+
+    #[rstest]
+    #[case(CellWidthType::Double, 2)]
+    #[case(CellWidthType::Single, 1)]
+    fn test_graph_width_narrower_hides_lanes_and_keeps_their_size(
+        #[case] cell_width_type: CellWidthType,
+        #[case] lane_cells: usize,
+    ) {
+        let all = GraphWidth::new(cell_width_type);
+        assert_eq!(all.cell_width(4), 4 * lane_cells);
+        assert_eq!(all.describe(4), "Graph: all 4 lanes");
+
+        let three = all.narrower(4).unwrap();
+        assert_eq!(three.cell_width_type, cell_width_type);
+        assert_eq!(three.max_lanes, Some(3));
+        assert_eq!(three.cell_width(4), 3 * lane_cells);
+        assert_eq!(three.describe(4), "Graph: 3 of 4 lanes");
+
+        let one = three.narrower(4).unwrap().narrower(4).unwrap();
+        assert_eq!(one.cell_width(4), lane_cells);
+        assert_eq!(one.narrower(4), None);
+    }
+
+    #[test]
+    fn test_graph_width_wider_reverses_narrower() {
+        let mut width = GraphWidth::new(CellWidthType::Double);
+        let mut steps = vec![width];
+        while let Some(narrower) = width.narrower(4) {
+            width = narrower;
+            steps.push(width);
+        }
+        assert_eq!(steps.len(), 4);
+
+        for expected in steps.iter().rev().skip(1) {
+            width = width.wider(4, 80).unwrap();
+            assert_eq!(width, *expected);
+        }
+        assert_eq!(width.wider(4, 80), None);
+    }
+
+    #[test]
+    fn test_graph_width_wider_needs_room() {
+        // 3 of 4 double-width lanes; the fourth needs 8 + 2 columns
+        let all = GraphWidth::new(CellWidthType::Double);
+        let three = all.narrower(4).unwrap();
+        assert_eq!(three.wider(4, 9), None);
+        assert_eq!(three.wider(4, 10), Some(all));
+    }
+
+    #[test]
+    fn test_graph_width_limit_above_lane_count_shows_every_lane() {
+        // the limit was set when the graph had more lanes
+        let width = GraphWidth {
+            cell_width_type: CellWidthType::Single,
+            max_lanes: Some(6),
+        };
+        assert_eq!(width.lanes(4), 4);
+        assert_eq!(width.describe(4), "Graph: all 4 lanes");
+        assert_eq!(width.narrower(4).unwrap().max_lanes, Some(3));
+        assert_eq!(width.wider(4, 80), None);
+    }
+
+    #[test]
+    fn test_graph_width_fit() {
+        let all = GraphWidth::new(CellWidthType::Double);
+        assert_eq!(all.fit(4, 10), all);
+        assert_eq!(all.fit(4, 9).max_lanes, Some(3));
+        assert_eq!(all.fit(4, 9).cell_width_type, CellWidthType::Double);
+        // never narrower than one lane, however small the terminal
+        assert_eq!(all.fit(4, 1).max_lanes, Some(1));
     }
 
     fn test_calc_graph_row_image(

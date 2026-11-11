@@ -174,6 +174,18 @@ impl<'a> ListView<'a> {
                 UserEvent::SwitchBranch => {
                     self.tx.send(AppEvent::SwitchBranchAtSelectedCommit);
                 }
+                UserEvent::GraphNarrower => {
+                    self.tx.send(AppEvent::ResizeGraph {
+                        wider: false,
+                        steps: count,
+                    });
+                }
+                UserEvent::GraphWider => {
+                    self.tx.send(AppEvent::ResizeGraph {
+                        wider: true,
+                        steps: count,
+                    });
+                }
                 _ => {}
             }
         }

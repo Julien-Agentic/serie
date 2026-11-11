@@ -200,6 +200,11 @@ fn main() -> Result<()> {
     let ec = event::EventController::init();
     let mut refresh_view_context = None;
     let mut refresh_message: Option<String> = None;
+    let mut refresh_warning: Option<String> = None;
+    // the graph column width chosen while running; it outlives refreshes
+    let mut chosen_graph_width: Option<graph::GraphWidth> = None;
+    // the number of graph lanes chosen in an earlier run
+    let saved_graph_lanes = git::saved_graph_lanes(Path::new("."));
     let mut terminal = None;
 
     let ret: Result<()> = (|| loop {
@@ -207,42 +212,70 @@ fn main() -> Result<()> {
 
         let graph = graph::calc_graph(&repository, primary_branch.as_deref());
 
-        let cell_width_type = check::decide_cell_width_type(&graph, graph_width)?;
+        // Changing the graph column width redraws the graph without reloading the repository.
+        loop {
+            let graph_width = match chosen_graph_width {
+                Some(chosen) => check::fit_graph_width(&graph, chosen)?,
+                None => {
+                    let cell_width_type = check::decide_cell_width_type(&graph, graph_width)?;
+                    let width = graph::GraphWidth {
+                        max_lanes: saved_graph_lanes,
+                        ..graph::GraphWidth::new(cell_width_type)
+                    };
+                    chosen_graph_width = saved_graph_lanes.map(|_| width);
+                    check::fit_graph_width(&graph, width)?
+                }
+            };
 
-        let graph_image_manager = GraphImageManager::new(
-            &graph,
-            &graph_color_set,
-            cell_width_type,
-            graph_style,
-            graph_antialias,
-            graph_image_width_mode,
-            image_protocol,
-        );
+            let graph_image_manager = GraphImageManager::new(
+                &graph,
+                &graph_color_set,
+                graph_width.cell_width_type,
+                graph_style,
+                graph_antialias,
+                graph_image_width_mode,
+                image_protocol,
+            )
+            .with_max_lanes(graph_width.max_lanes);
 
-        if terminal.is_none() {
-            terminal = Some(ratatui::init());
-        }
-
-        let mut app = App::new(
-            &repository,
-            graph_image_manager,
-            &graph_color_set,
-            initial_selection,
-            ctx.clone(),
-            &ec,
-        );
-
-        if let Some(message) = refresh_message.take() {
-            app.success_notification(message);
-        }
-
-        match app.run(terminal.as_mut().unwrap(), refresh_view_context)? {
-            Ret::Quit => {
-                break Ok(());
+            if terminal.is_none() {
+                terminal = Some(ratatui::init());
             }
-            Ret::Refresh(request) => {
-                refresh_view_context = Some(request.context);
-                refresh_message = request.message;
+
+            let mut app = App::new(
+                &repository,
+                graph_image_manager,
+                &graph_color_set,
+                initial_selection,
+                ctx.clone(),
+                &ec,
+            );
+
+            if let Some(message) = refresh_message.take() {
+                app.success_notification(message);
+            }
+            if let Some(warning) = refresh_warning.take() {
+                app.warn_notification(warning);
+            }
+
+            match app.run(terminal.as_mut().unwrap(), refresh_view_context)? {
+                Ret::Quit => {
+                    return Ok(());
+                }
+                Ret::Refresh(request) => {
+                    refresh_view_context = Some(request.context);
+                    refresh_message = request.message;
+                    match request.graph_width {
+                        Some(width) => {
+                            chosen_graph_width = Some(width);
+                            let saved = git::save_graph_lanes(Path::new("."), width.max_lanes);
+                            if let Err(err) = saved {
+                                refresh_warning = Some(format!("Graph width not saved: {err}"));
+                            }
+                        }
+                        None => break,
+                    }
+                }
             }
         }
     })();

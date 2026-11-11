@@ -36,6 +36,9 @@ mark_toggle = ["m"]
 refresh = ["shift-r"]
 # switch to the branch at the selected commit; pages down in views without a branch
 switch_branch = ["space"]
+# narrow or widen the graph column
+graph_narrower = ["<"]
+graph_wider = [">"]
 
 user_command_1 = ["d"]
 

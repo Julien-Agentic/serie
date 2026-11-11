@@ -25,7 +25,7 @@ use crate::{
         copy_to_clipboard, exec_user_command, exec_user_command_suspend, ExternalCommandParameters,
     },
     git::{BranchTarget, BranchesAtCommit, Commit, CommitHash, FileChange, Head, Ref, Repository},
-    graph::GraphImageManager,
+    graph::{GraphImageManager, GraphWidth},
     keybind::KeyBind,
     protocol::ImageProtocol,
     search::SearchOptions,
@@ -69,6 +69,8 @@ pub struct RefreshRequest {
     pub context: RefreshViewContext,
     // shown as a success notification once the refreshed app is running
     pub message: Option<String>,
+    // set when only the graph column width changes: the repository is not reloaded
+    pub graph_width: Option<GraphWidth>,
 }
 
 // A question on the status line; the next key press answers it.
@@ -105,6 +107,7 @@ struct AppStatus {
     pending_clear: PendingClear,
     pending_prompt: Option<PendingPrompt>,
     pending_refresh_message: Option<String>,
+    pending_graph_width: Option<GraphWidth>,
 }
 
 #[derive(Debug)]
@@ -112,6 +115,8 @@ pub struct App<'a> {
     repository: &'a Repository,
     view: View<'a>,
     app_status: AppStatus,
+    graph_width: GraphWidth,
+    graph_lane_count: usize,
     ctx: Rc<AppContext>,
     ec: &'a EventController,
 }
@@ -142,6 +147,8 @@ impl<'a> App<'a> {
             })
             .collect();
         let graph_cell_width = graph_image_manager.graph_cell_width();
+        let graph_width = graph_image_manager.graph_width();
+        let graph_lane_count = graph_image_manager.lane_count();
         let head = repository.head();
         let mut commit_list_state = CommitListState::new(
             commits,
@@ -169,6 +176,8 @@ impl<'a> App<'a> {
             repository,
             view,
             app_status: AppStatus::default(),
+            graph_width,
+            graph_lane_count,
             ctx,
             ec,
         };
@@ -324,13 +333,21 @@ impl App<'_> {
                 AppEvent::SwitchBranchAtSelectedCommit => {
                     self.switch_branch_at_selected_commit();
                 }
+                AppEvent::ResizeGraph { wider, steps } => {
+                    self.resize_graph(wider, steps);
+                }
                 AppEvent::CopyToClipboard { name, value } => {
                     self.copy_to_clipboard(name, value);
                 }
                 AppEvent::Refresh(context) => {
                     self.cleanup_graph_images()?;
                     let message = self.app_status.pending_refresh_message.take();
-                    let request = RefreshRequest { context, message };
+                    let graph_width = self.app_status.pending_graph_width.take();
+                    let request = RefreshRequest {
+                        context,
+                        message,
+                        graph_width,
+                    };
                     return Ok(Ret::Refresh(request));
                 }
                 AppEvent::ClearStatusLine => {
@@ -838,7 +855,7 @@ impl App<'_> {
         self.app_status.status_line = StatusLine::NotificationSuccess(msg);
     }
 
-    fn warn_notification(&mut self, msg: String) {
+    pub fn warn_notification(&mut self, msg: String) {
         self.app_status.status_line = StatusLine::NotificationWarn(msg);
     }
 
@@ -872,6 +889,38 @@ impl App<'_> {
             Ok(false) => self.switch_branch(target),
             Err(err) => self.error_notification(err),
         }
+    }
+
+    // Narrows or widens the graph column by redrawing the graph at another width.
+    fn resize_graph(&mut self, wider: bool, steps: usize) {
+        let lane_count = self.graph_lane_count;
+        let term_width = self.app_status.view_area.width as usize;
+        let mut width = self.graph_width;
+        for _ in 0..steps {
+            let next = if wider {
+                width.wider(lane_count, term_width)
+            } else {
+                width.narrower(lane_count)
+            };
+            match next {
+                Some(next) => width = next,
+                None => break,
+            }
+        }
+        if width == self.graph_width {
+            let message = if !wider {
+                "The graph is at its narrowest"
+            } else if width.lanes(lane_count) == lane_count {
+                "The graph is at its widest"
+            } else {
+                "No room for a wider graph"
+            };
+            self.info_notification(message.into());
+            return;
+        }
+        self.app_status.pending_graph_width = Some(width);
+        self.app_status.pending_refresh_message = Some(width.describe(lane_count));
+        self.view.refresh();
     }
 
     // Space on a commit switches to the branch whose head it is.

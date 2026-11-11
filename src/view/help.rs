@@ -249,6 +249,8 @@ fn build_lines(
         (vec![UserEvent::Confirm], "Show commit details".into()),
         (vec![UserEvent::RefList], "Open refs list".into()),
         (vec![UserEvent::SwitchBranch], "Switch to branch at commit".into()),
+        (vec![UserEvent::GraphNarrower], "Narrow the graph column".into()),
+        (vec![UserEvent::GraphWider], "Widen the graph column".into()),
         (vec![UserEvent::Search], "Start search".into()),
         (vec![UserEvent::Cancel], "Cancel search".into()),
         (vec![UserEvent::GoToNext], "Go to next search match".into()),
