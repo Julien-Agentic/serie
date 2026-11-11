@@ -3,7 +3,7 @@ use std::{collections::HashSet, rc::Rc};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
-    style::Style,
+    style::{Modifier, Style},
     widgets::{Block, Borders, Padding, StatefulWidget},
 };
 use semver::Version;
@@ -28,6 +28,9 @@ pub struct RefListState {
     opened: HashSet<Vec<String>>,
     offset: usize,
     scroll_to_selection: bool,
+
+    current_branch: Option<String>,
+    other_worktree_branches: HashSet<String>,
 }
 
 impl RefListState {
@@ -41,9 +44,22 @@ impl RefListState {
             opened,
             offset: 0,
             scroll_to_selection: true,
+            current_branch: None,
+            other_worktree_branches: HashSet::new(),
         };
         state.rebuild_visible_rows();
         state
+    }
+
+    /// Sets which local branch is checked out here and which are checked out in
+    /// other worktrees, so that the list can mark them.
+    pub fn set_branch_status(
+        &mut self,
+        current_branch: Option<String>,
+        other_worktree_branches: HashSet<String>,
+    ) {
+        self.current_branch = current_branch;
+        self.other_worktree_branches = other_worktree_branches;
     }
 
     pub fn select_next(&mut self) {
@@ -103,6 +119,25 @@ impl RefListState {
                 || self.selected[0] == TREE_REMOTE_ROOT_IDENT)
         {
             self.selected.last().cloned()
+        } else {
+            None
+        }
+    }
+
+    /// The selected local branch, unless the selection is a folder of branches.
+    pub fn selected_local_branch(&self) -> Option<String> {
+        self.selected_leaf_under(TREE_BRANCH_ROOT_IDENT)
+    }
+
+    /// The selected remote-tracking branch, unless the selection is a folder.
+    pub fn selected_remote_branch(&self) -> Option<String> {
+        self.selected_leaf_under(TREE_REMOTE_ROOT_IDENT)
+    }
+
+    fn selected_leaf_under(&self, root: &str) -> Option<String> {
+        let row = &self.visible_rows[self.selected_index()?];
+        if row.depth > 0 && !row.has_children && row.identifier[0] == root {
+            row.identifier.last().cloned()
         } else {
             None
         }
@@ -231,17 +266,35 @@ impl StatefulWidget for RefList {
             .enumerate()
         {
             let y = inner.y + line as u16;
-            let symbol = if !row.has_children {
+            let is_local_branch =
+                row.depth > 0 && !row.has_children && row.identifier[0] == TREE_BRANCH_ROOT_IDENT;
+            let branch_name = row.identifier.last().filter(|_| is_local_branch);
+            let is_current = branch_name.is_some() && branch_name == state.current_branch.as_ref();
+            let in_other_worktree =
+                branch_name.is_some_and(|name| state.other_worktree_branches.contains(name));
+            // The same markers as `git branch`.
+            let symbol = if is_current {
+                "* "
+            } else if in_other_worktree {
+                "+ "
+            } else if !row.has_children {
                 "  "
             } else if state.opened.contains(&row.identifier) {
                 "▾ "
             } else {
                 "▸ "
             };
+            let row_style = if is_current {
+                item_style
+                    .fg(self.ctx.color_theme.list_head_fg)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                item_style
+            };
             let prefix = format!("{}{symbol}", "  ".repeat(row.depth));
-            let (text_x, _) = buf.set_stringn(inner.x, y, prefix, inner.width as usize, item_style);
+            let (text_x, _) = buf.set_stringn(inner.x, y, prefix, inner.width as usize, row_style);
             let remaining = inner.width.saturating_sub(text_x - inner.x);
-            buf.set_stringn(text_x, y, &row.name, remaining as usize, item_style);
+            buf.set_stringn(text_x, y, &row.name, remaining as usize, row_style);
             if row.identifier == state.selected {
                 buf.set_style(Rect::new(inner.x, y, inner.width, 1), highlight_style);
             }
@@ -395,4 +448,146 @@ fn sort_stash_tree_nodes(nodes: &mut [RefTreeNode]) {
 fn parse_semantic_version_tag(tag: &str) -> Option<Version> {
     let tag = tag.trim_start_matches('v');
     Version::parse(tag).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use ratatui::style::Color;
+
+    use super::*;
+    use crate::{
+        config::{CoreConfig, UiConfig},
+        keybind::KeyBind,
+        protocol::ImageProtocol,
+    };
+
+    fn refs() -> Vec<Ref> {
+        let target = crate::git::CommitHash::from("0000000000000000000000000000000000000001");
+        let branch = |name: &str| Ref::Branch {
+            name: name.into(),
+            target: target.clone(),
+        };
+        let remote = |name: &str| Ref::RemoteBranch {
+            name: name.into(),
+            target: target.clone(),
+        };
+        vec![
+            branch("main"),
+            branch("feature/login"),
+            branch("feature/logout"),
+            branch("fix/typo"),
+            remote("origin/main"),
+            remote("origin/feature/login"),
+            Ref::Tag {
+                name: "v1.0.0".into(),
+                target: target.clone(),
+            },
+            Ref::Stash {
+                name: "stash@{0}".into(),
+                message: "WIP on main: login form".into(),
+                target,
+            },
+        ]
+    }
+
+    fn state() -> RefListState {
+        let refs = refs();
+        RefListState::new(&refs.iter().collect::<Vec<_>>())
+    }
+
+    fn render(state: &mut RefListState, width: u16, height: u16) -> Buffer {
+        let ctx = Rc::new(AppContext {
+            keybind: KeyBind::new(None),
+            core_config: CoreConfig::default(),
+            ui_config: UiConfig::default(),
+            color_theme: crate::color::ColorTheme::default(),
+            image_protocol: ImageProtocol::Iterm2,
+        });
+        let area = Rect::new(0, 0, width, height);
+        let mut buf = Buffer::empty(area);
+        RefList::new(ctx).render(area, &mut buf, state);
+        buf
+    }
+
+    fn line(buf: &Buffer, y: u16) -> String {
+        (0..buf.area.width)
+            .map(|x| buf[(x, y)].symbol())
+            .collect::<String>()
+            .trim_end()
+            .to_string()
+    }
+
+    #[test]
+    fn test_selected_branch_is_none_for_folders_and_other_refs() {
+        let mut state = state();
+        // Branches root
+        assert_eq!(state.selected_local_branch(), None);
+        state.select_next(); // feature (folder)
+        assert_eq!(state.selected_local_branch(), None);
+        assert_eq!(state.selected_remote_branch(), None);
+
+        state.open_node();
+        state.select_next(); // feature/login
+        assert_eq!(
+            state.selected_local_branch().as_deref(),
+            Some("feature/login")
+        );
+        assert_eq!(state.selected_remote_branch(), None);
+
+        state.select_last();
+        state.select_prev(); // Tags
+        state.open_node();
+        state.select_next(); // v1.0.0
+        assert_eq!(state.selected_local_branch(), None);
+        assert_eq!(state.selected_remote_branch(), None);
+        assert_eq!(state.selected_tag().as_deref(), Some("v1.0.0"));
+    }
+
+    #[test]
+    fn test_selected_remote_branch() {
+        let mut state = state();
+        for _ in 0..4 {
+            state.select_next(); // feature, fix, main, Remotes
+        }
+        state.open_node();
+        state.select_next(); // origin
+        state.open_node();
+        state.select_next(); // feature (folder)
+        assert_eq!(state.selected_remote_branch(), None);
+        state.select_next(); // origin/main
+
+        assert_eq!(
+            state.selected_remote_branch().as_deref(),
+            Some("origin/main")
+        );
+        assert_eq!(state.selected_local_branch(), None);
+    }
+
+    #[test]
+    fn test_render_marks_current_and_other_worktree_branches() {
+        let mut state = state();
+        state.set_branch_status(
+            Some("main".into()),
+            HashSet::from(["feature/login".to_string()]),
+        );
+        state.select_next(); // feature (folder)
+        state.open_node();
+
+        let buf = render(&mut state, 30, 10);
+
+        assert_eq!(line(&buf, 0), "│ ▾ Branches");
+        assert_eq!(line(&buf, 1), "│   ▾ feature");
+        assert_eq!(line(&buf, 2), "│     + login");
+        assert_eq!(line(&buf, 3), "│       logout");
+        assert_eq!(line(&buf, 4), "│   ▸ fix");
+        assert_eq!(line(&buf, 5), "│   * main");
+        assert_eq!(line(&buf, 6), "│ ▸ Remotes");
+
+        // The current branch stands out; the selected row uses the selection colours.
+        let theme = crate::color::ColorTheme::default();
+        assert_eq!(buf[(6, 5)].fg, theme.list_head_fg);
+        assert!(buf[(6, 5)].modifier.contains(Modifier::BOLD));
+        assert_eq!(buf[(8, 1)].bg, theme.ref_selected_bg);
+        assert_eq!(buf[(8, 5)].bg, Color::Reset);
+    }
 }

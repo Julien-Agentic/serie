@@ -27,6 +27,7 @@ The default key bindings can be overridden.
 | <kbd>H/M/L</kbd>                     | Select top/middle/bottom of the screen             | `select_top` `select_middle` `select_bottom` |
 | <kbd>Enter</kbd>                     | Show commit details<br>Apply search (if searching) | `confirm`                                    |
 | <kbd>Tab</kbd>                       | Open refs list                                     | `ref_list`                                   |
+| <kbd>Space</kbd>                     | Switch to the branch at the selected commit        | `switch_branch`                              |
 | <kbd>/</kbd>                         | Start search                                       | `search`                                     |
 | <kbd>Esc</kbd>                       | Cancel search                                      | `cancel`                                     |
 | <kbd>n/N</kbd>                       | Go to next/previous search match                   | `go_to_next` `go_to_previous`                |
@@ -63,8 +64,22 @@ The default key bindings can be overridden.
 | <kbd>J/K</kbd>                                     | Move down/up     | `select_down` `select_up`        |
 | <kbd>g/G</kbd>                                     | Go to top/bottom | `go_to_top` `go_to_bottom`       |
 | <kbd>Right/Left</kbd> <kbd>l/h</kbd>               | Open/Close node  | `navigate_right` `navigate_left` |
+| <kbd>Space</kbd>                                   | Switch to the selected branch | `switch_branch`     |
 | <kbd>R</kbd>                                       | Refresh          | `refresh`                        |
 | <kbd>c</kbd>                                       | Copy ref name    | `short_copy`                     |
+
+The current branch is marked with `*` and a branch checked out in another
+worktree with `+`, as in `git branch`. Switching never forces, stashes or
+discards: a branch held by another worktree is refused, uncommitted changes
+ask for confirmation first, and anything git refuses is shown as an error.
+
+In the commit list, <kbd>Space</kbd> switches to the branch whose head is the
+selected commit. If several branches point at that commit, the status line
+lists them and a digit picks one; any other key cancels. A remote branch
+without a local branch is offered too and creates a tracking local branch.
+A commit with no branch is left alone: Serie never detaches HEAD. In the
+commit detail, user command and help views, <kbd>Space</kbd> scrolls a page
+down as before.
 
 #### User Command
 

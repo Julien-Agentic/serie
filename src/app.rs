@@ -24,7 +24,7 @@ use crate::{
     external::{
         copy_to_clipboard, exec_user_command, exec_user_command_suspend, ExternalCommandParameters,
     },
-    git::{Commit, CommitHash, FileChange, Head, Ref, Repository},
+    git::{BranchTarget, BranchesAtCommit, Commit, CommitHash, FileChange, Head, Ref, Repository},
     graph::GraphImageManager,
     keybind::KeyBind,
     protocol::ImageProtocol,
@@ -67,6 +67,17 @@ pub enum Ret {
 
 pub struct RefreshRequest {
     pub context: RefreshViewContext,
+    // shown as a success notification once the refreshed app is running
+    pub message: Option<String>,
+}
+
+// A question on the status line; the next key press answers it.
+#[derive(Debug)]
+enum PendingPrompt {
+    // y/N: switch although the worktree has uncommitted changes
+    ConfirmSwitch(BranchTarget),
+    // 1-9: which of the branches at the selected commit to switch to
+    ChooseBranch(Vec<BranchTarget>),
 }
 
 #[derive(Debug)]
@@ -92,6 +103,8 @@ struct AppStatus {
     numeric_prefix: String,
     view_area: Rect,
     pending_clear: PendingClear,
+    pending_prompt: Option<PendingPrompt>,
+    pending_refresh_message: Option<String>,
 }
 
 #[derive(Debug)]
@@ -189,6 +202,17 @@ impl App<'_> {
             io::stdout().sync_update(|_| self.draw(terminal))??;
             match self.ec.recv() {
                 AppEvent::Key(key) => {
+                    if let Some(pending) = self.app_status.pending_prompt.take() {
+                        self.clear_status_line();
+                        if let Some(UserEvent::ForceQuit) = self.ctx.keybind.get(&key) {
+                            self.ec.send(AppEvent::Quit);
+                        } else {
+                            self.answer_prompt(pending, key);
+                        }
+                        // The key answered the prompt and is not passed on.
+                        continue;
+                    }
+
                     match self.app_status.status_line {
                         StatusLine::None | StatusLine::Input { .. } => {
                             // do nothing
@@ -294,12 +318,19 @@ impl App<'_> {
                 AppEvent::SelectParentCommit => {
                     self.select_parent_commit();
                 }
+                AppEvent::SwitchBranch(target) => {
+                    self.request_switch_branch(target);
+                }
+                AppEvent::SwitchBranchAtSelectedCommit => {
+                    self.switch_branch_at_selected_commit();
+                }
                 AppEvent::CopyToClipboard { name, value } => {
                     self.copy_to_clipboard(name, value);
                 }
                 AppEvent::Refresh(context) => {
                     self.cleanup_graph_images()?;
-                    let request = RefreshRequest { context };
+                    let message = self.app_status.pending_refresh_message.take();
+                    let request = RefreshRequest { context, message };
                     return Ok(Ret::Refresh(request));
                 }
                 AppEvent::ClearStatusLine => {
@@ -676,7 +707,24 @@ impl App<'_> {
         if let View::List(ref mut view) = self.view {
             let commit_list_state = view.take_list_state();
             let refs = self.repository.all_refs();
-            self.view = View::of_refs(commit_list_state, &refs, self.ctx.clone(), self.ec.sender());
+            let current_branch = match self.repository.head() {
+                Head::Branch { name } => Some(name.clone()),
+                Head::Detached { .. } | Head::None => None,
+            };
+            let other_worktree_branches = self
+                .repository
+                .other_worktree_branches()
+                .keys()
+                .cloned()
+                .collect();
+            self.view = View::of_refs(
+                commit_list_state,
+                &refs,
+                current_branch,
+                other_worktree_branches,
+                self.ctx.clone(),
+                self.ec.sender(),
+            );
         }
     }
 
@@ -786,7 +834,7 @@ impl App<'_> {
         self.app_status.status_line = StatusLine::NotificationInfo(msg);
     }
 
-    fn success_notification(&mut self, msg: String) {
+    pub fn success_notification(&mut self, msg: String) {
         self.app_status.status_line = StatusLine::NotificationSuccess(msg);
     }
 
@@ -796,6 +844,106 @@ impl App<'_> {
 
     fn error_notification(&mut self, msg: String) {
         self.app_status.status_line = StatusLine::NotificationError(msg);
+    }
+
+    fn request_switch_branch(&mut self, target: BranchTarget) {
+        if let BranchTarget::Local(name) = &target {
+            if matches!(self.repository.head(), Head::Branch { name: current } if current == name) {
+                self.info_notification(format!("Already on '{name}'"));
+                return;
+            }
+            // Never take a branch away from the worktree, and possibly the agent, using it.
+            if let Some(path) = self.repository.other_worktree_branches().get(name) {
+                self.error_notification(format!(
+                    "'{name}' is checked out in worktree {}; not switching",
+                    path.display()
+                ));
+                return;
+            }
+        }
+        match self.repository.has_uncommitted_changes() {
+            Ok(true) => {
+                self.warn_notification(format!(
+                    "This worktree has uncommitted changes. Switch to '{}' anyway? [y/N]",
+                    target.name()
+                ));
+                self.app_status.pending_prompt = Some(PendingPrompt::ConfirmSwitch(target));
+            }
+            Ok(false) => self.switch_branch(target),
+            Err(err) => self.error_notification(err),
+        }
+    }
+
+    // Space on a commit switches to the branch whose head it is.
+    fn switch_branch_at_selected_commit(&mut self) {
+        let View::List(view) = &self.view else {
+            return;
+        };
+        let selected = view.as_list_state().selected_commit_hash().clone();
+        let BranchesAtCommit {
+            mut targets,
+            has_current,
+            shadowed_remotes,
+        } = self.repository.branches_at(&selected);
+
+        match targets.len() {
+            0 => {
+                if let (true, Head::Branch { name }) = (has_current, self.repository.head()) {
+                    self.info_notification(format!("Already on '{name}'"));
+                } else if let Some((remote, local)) = shadowed_remotes.first() {
+                    self.warn_notification(format!(
+                        "'{remote}' already has a local branch '{local}' at another commit; switch from there"
+                    ));
+                } else {
+                    self.info_notification("No branch at this commit".into());
+                }
+            }
+            1 => self.request_switch_branch(targets.remove(0)),
+            _ => {
+                // The answer is a single digit.
+                targets.truncate(9);
+                let choices: Vec<String> = targets
+                    .iter()
+                    .enumerate()
+                    .map(|(i, target)| format!("[{}] {}", i + 1, target.name()))
+                    .collect();
+                self.info_notification(format!("Switch to: {}", choices.join("  ")));
+                self.app_status.pending_prompt = Some(PendingPrompt::ChooseBranch(targets));
+            }
+        }
+    }
+
+    // Any key other than the expected answer cancels the prompt.
+    fn answer_prompt(&mut self, pending: PendingPrompt, key: KeyEvent) {
+        match (pending, key.code) {
+            (PendingPrompt::ConfirmSwitch(target), KeyCode::Char('y' | 'Y')) => {
+                self.switch_branch(target);
+            }
+            (PendingPrompt::ChooseBranch(mut targets), KeyCode::Char(c)) => {
+                let index = c.to_digit(10).and_then(|d| (d as usize).checked_sub(1));
+                if let Some(index) = index.filter(|i| *i < targets.len()) {
+                    self.request_switch_branch(targets.swap_remove(index));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn switch_branch(&mut self, target: BranchTarget) {
+        match self.repository.switch_branch(&target) {
+            Ok(()) => {
+                let message = match &target {
+                    BranchTarget::Local(name) => format!("Switched to branch '{name}'"),
+                    BranchTarget::Remote(name) => {
+                        format!("Switched to a new branch tracking '{name}'")
+                    }
+                };
+                // The graph, HEAD and branch markers are reloaded; the message is shown afterwards.
+                self.app_status.pending_refresh_message = Some(message);
+                self.view.refresh();
+            }
+            Err(err) => self.error_notification(err),
+        }
     }
 
     fn copy_to_clipboard(&self, name: String, value: String) {

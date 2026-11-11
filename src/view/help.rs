@@ -73,7 +73,8 @@ impl HelpView<'_> {
                     self.scroll_up();
                 }
             }
-            UserEvent::PageDown => {
+            // Space has no branch to act on here, so it keeps paging down.
+            UserEvent::PageDown | UserEvent::SwitchBranch => {
                 for _ in 0..count {
                     self.scroll_page_down();
                 }
@@ -247,6 +248,7 @@ fn build_lines(
         (vec![UserEvent::SelectBottom], "Select bottom of the screen".into()),
         (vec![UserEvent::Confirm], "Show commit details".into()),
         (vec![UserEvent::RefList], "Open refs list".into()),
+        (vec![UserEvent::SwitchBranch], "Switch to branch at commit".into()),
         (vec![UserEvent::Search], "Start search".into()),
         (vec![UserEvent::Cancel], "Cancel search".into()),
         (vec![UserEvent::GoToNext], "Go to next search match".into()),
@@ -291,6 +293,7 @@ fn build_lines(
         (vec![UserEvent::GoToBottom], "Go to bottom".into()),
         (vec![UserEvent::NavigateRight], "Open node".into()),
         (vec![UserEvent::NavigateLeft], "Close node".into()),
+        (vec![UserEvent::SwitchBranch], "Switch to branch".into()),
         (vec![UserEvent::Refresh], "Refresh".into()),
         (vec![UserEvent::ShortCopy], "Copy ref name".into()),
     ];

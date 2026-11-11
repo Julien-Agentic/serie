@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::{collections::HashSet, rc::Rc};
 
 use ratatui::{crossterm::event::KeyEvent, layout::Rect, Frame};
 
@@ -146,10 +146,19 @@ impl<'a> View<'a> {
     pub fn of_refs(
         commit_list_state: CommitListState<'a>,
         refs: &[&Ref],
+        current_branch: Option<String>,
+        other_worktree_branches: HashSet<String>,
         ctx: Rc<AppContext>,
         tx: Sender,
     ) -> Self {
-        View::Refs(Box::new(RefsView::new(commit_list_state, refs, ctx, tx)))
+        View::Refs(Box::new(RefsView::new(
+            commit_list_state,
+            refs,
+            current_branch,
+            other_worktree_branches,
+            ctx,
+            tx,
+        )))
     }
 
     pub fn of_help(before: View<'a>, ctx: Rc<AppContext>, tx: Sender) -> Self {

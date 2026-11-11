@@ -65,7 +65,8 @@ impl<'a> DetailView<'a> {
                     self.commit_detail_state.scroll_up();
                 }
             }
-            UserEvent::PageDown => {
+            // Space has no branch to act on here, so it keeps paging down.
+            UserEvent::PageDown | UserEvent::SwitchBranch => {
                 for _ in 0..count {
                     self.commit_detail_state.scroll_page_down();
                 }

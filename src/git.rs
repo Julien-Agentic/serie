@@ -114,6 +114,9 @@ pub struct Repository {
     head: Head,
     // to preserve order of the original commits from `git log`, we store the commit hashes
     commit_hashes: Vec<CommitHash>,
+
+    // local branches checked out in a worktree other than this one, with that worktree's path
+    other_worktree_branches: FxHashMap<String, PathBuf>,
 }
 
 impl Repository {
@@ -142,7 +145,9 @@ impl Repository {
         let stash_ref_map = load_stashes_as_refs(path);
         merge_ref_maps(&mut ref_map, stash_ref_map);
 
-        Ok(Self::new(
+        let other_worktree_branches = other_worktree_branches(load_worktrees(path), &head);
+
+        let mut repository = Self::new(
             path.to_path_buf(),
             commit_map,
             parents_map,
@@ -150,7 +155,9 @@ impl Repository {
             ref_map,
             head,
             commit_hashes,
-        ))
+        );
+        repository.other_worktree_branches = other_worktree_branches;
+        Ok(repository)
     }
 
     pub fn new(
@@ -170,7 +177,29 @@ impl Repository {
             ref_map,
             head,
             commit_hashes,
+            other_worktree_branches: FxHashMap::default(),
         }
+    }
+
+    /// Local branches checked out in a worktree other than this one.
+    pub fn other_worktree_branches(&self) -> &FxHashMap<String, PathBuf> {
+        &self.other_worktree_branches
+    }
+
+    /// Whether tracked files in this worktree have staged or unstaged changes.
+    pub fn has_uncommitted_changes(&self) -> std::result::Result<bool, String> {
+        let args = ["status", "--porcelain", "--untracked-files=no"];
+        run_git(&self.path, &args).map(|stdout| !stdout.trim().is_empty())
+    }
+
+    /// Switches this worktree to a branch. Never forces, stashes or discards:
+    /// whatever git refuses is returned as the error.
+    pub fn switch_branch(&self, target: &BranchTarget) -> std::result::Result<(), String> {
+        let result = match target {
+            BranchTarget::Local(name) => run_git(&self.path, &["switch", name]),
+            BranchTarget::Remote(name) => run_git(&self.path, &["switch", "--track", name]),
+        };
+        result.map(|_| ())
     }
 
     pub fn commit(&self, commit_hash: &CommitHash) -> Option<&Commit> {
@@ -213,6 +242,23 @@ impl Repository {
         &self.head
     }
 
+    /// The branches pointing at a commit, sorted into what can be switched to.
+    pub fn branches_at(&self, commit_hash: &CommitHash) -> BranchesAtCommit {
+        let local_branches: Vec<&str> = self
+            .all_refs()
+            .into_iter()
+            .filter_map(|r| match r {
+                Ref::Branch { name, .. } => Some(name.as_str()),
+                _ => None,
+            })
+            .collect();
+        let current = match &self.head {
+            Head::Branch { name } => Some(name.as_str()),
+            Head::Detached { .. } | Head::None => None,
+        };
+        branches_at_commit(&self.refs(commit_hash), &local_branches, current)
+    }
+
     pub fn commit_detail(&self, commit_hash: &CommitHash) -> (Commit, Vec<FileChange>) {
         let commit = self.commit(commit_hash).unwrap().clone();
         let changes = if commit.parent_commit_hashes.is_empty() {
@@ -221,6 +267,154 @@ impl Repository {
             get_diff_summary(&self.path, commit_hash)
         };
         (commit, changes)
+    }
+}
+
+/// A branch the user asked to switch to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BranchTarget {
+    /// A local branch, by its short name.
+    Local(String),
+    /// A remote-tracking branch such as `origin/topic`; switching to it creates
+    /// a local branch that tracks it.
+    Remote(String),
+}
+
+impl BranchTarget {
+    pub fn name(&self) -> &str {
+        match self {
+            BranchTarget::Local(name) | BranchTarget::Remote(name) => name,
+        }
+    }
+}
+
+/// The branches pointing at one commit, from the point of view of switching.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct BranchesAtCommit {
+    /// Branches that can be switched to: local ones first, then remote ones
+    /// that have no local branch yet.
+    pub targets: Vec<BranchTarget>,
+    /// The current branch points at this commit.
+    pub has_current: bool,
+    /// Remote branches left out because their local branch already exists at
+    /// another commit, as (remote name, local name).
+    pub shadowed_remotes: Vec<(String, String)>,
+}
+
+fn branches_at_commit(
+    refs_at_commit: &[&Ref],
+    local_branches: &[&str],
+    current: Option<&str>,
+) -> BranchesAtCommit {
+    let mut locals: Vec<&str> = Vec::new();
+    let mut remotes: Vec<&str> = Vec::new();
+    for r in refs_at_commit {
+        match r {
+            Ref::Branch { name, .. } => locals.push(name),
+            // `origin/HEAD` is a pointer to the remote's default branch, not a branch.
+            Ref::RemoteBranch { name, .. } if !name.ends_with("/HEAD") => remotes.push(name),
+            _ => {}
+        }
+    }
+    locals.sort_unstable();
+    remotes.sort_unstable();
+
+    let mut result = BranchesAtCommit {
+        has_current: current.is_some_and(|c| locals.contains(&c)),
+        ..Default::default()
+    };
+    for &local in &locals {
+        if Some(local) != current {
+            result.targets.push(BranchTarget::Local(local.into()));
+        }
+    }
+    for remote in remotes {
+        // `git switch --track origin/topic` creates the local branch `topic`.
+        let Some((_, local)) = remote.split_once('/') else {
+            continue;
+        };
+        if locals.contains(&local) {
+            // The local branch is here too and already covers it.
+        } else if local_branches.contains(&local) {
+            result.shadowed_remotes.push((remote.into(), local.into()));
+        } else {
+            result.targets.push(BranchTarget::Remote(remote.into()));
+        }
+    }
+    result
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Worktree {
+    path: PathBuf,
+    branch: Option<String>,
+}
+
+fn load_worktrees(path: &Path) -> Vec<Worktree> {
+    run_git(path, &["worktree", "list", "--porcelain"])
+        .map(|stdout| parse_worktrees(&stdout))
+        .unwrap_or_default()
+}
+
+fn parse_worktrees(porcelain: &str) -> Vec<Worktree> {
+    let mut worktrees: Vec<Worktree> = Vec::new();
+    for line in porcelain.lines() {
+        if let Some(path) = line.strip_prefix("worktree ") {
+            worktrees.push(Worktree {
+                path: PathBuf::from(path),
+                branch: None,
+            });
+        } else if let Some(branch) = line.strip_prefix("branch refs/heads/") {
+            if let Some(worktree) = worktrees.last_mut() {
+                worktree.branch = Some(branch.into());
+            }
+        }
+    }
+    worktrees
+}
+
+// A branch can be checked out in only one worktree, so the worktree holding the
+// current branch is this one and every other branch belongs to another worktree.
+fn other_worktree_branches(worktrees: Vec<Worktree>, head: &Head) -> FxHashMap<String, PathBuf> {
+    let current = match head {
+        Head::Branch { name } => Some(name.as_str()),
+        Head::Detached { .. } | Head::None => None,
+    };
+    worktrees
+        .into_iter()
+        .filter_map(|worktree| Some((worktree.branch?, worktree.path)))
+        .filter(|(branch, _)| Some(branch.as_str()) != current)
+        .collect()
+}
+
+fn run_git(path: &Path, args: &[&str]) -> std::result::Result<String, String> {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(path)
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("Failed to run git {}: {e}", args.join(" ")))?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    } else {
+        Err(git_error_message(
+            &String::from_utf8_lossy(&output.stderr),
+            args,
+        ))
+    }
+}
+
+// Git errors can span several lines, but they are shown on the one-line status bar.
+fn git_error_message(stderr: &str, args: &[&str]) -> String {
+    let message = stderr.split_whitespace().collect::<Vec<_>>().join(" ");
+    let message = message
+        .strip_prefix("fatal: ")
+        .or_else(|| message.strip_prefix("error: "))
+        .unwrap_or(&message);
+    if message.is_empty() {
+        format!("git {} failed", args.join(" "))
+    } else {
+        message.to_string()
     }
 }
 
@@ -696,4 +890,345 @@ pub fn get_initial_commit_additions(path: &Path, commit_hash: &CommitHash) -> Ve
     cmd.wait().unwrap();
 
     changes
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use tempfile::TempDir;
+
+    use super::*;
+    use crate::test_support::git::GitRepository;
+
+    fn git(path: &Path, args: &[&str]) {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(path)
+            .env("GIT_AUTHOR_NAME", "Author Name")
+            .env("GIT_AUTHOR_EMAIL", "author@example.com")
+            .env("GIT_COMMITTER_NAME", "Committer Name")
+            .env("GIT_COMMITTER_EMAIL", "committer@example.com")
+            .env("GIT_CONFIG_NOSYSTEM", "true")
+            .env("HOME", "/dev/null")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fn commit_file(path: &Path, name: &str, content: &str) {
+        fs::write(path.join(name), content).unwrap();
+        git(path, &["add", name]);
+        git(path, &["commit", "-m", &format!("write {name}")]);
+    }
+
+    // master has file.txt = "master"; topic changes it to "topic".
+    fn repository_with_topic_branch() -> TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path();
+        GitRepository::new(path).init();
+        commit_file(path, "file.txt", "master\n");
+        git(path, &["switch", "-c", "topic"]);
+        commit_file(path, "file.txt", "topic\n");
+        git(path, &["switch", "master"]);
+        dir
+    }
+
+    fn load(path: &Path) -> Repository {
+        Repository::load(path, SortCommit::Chronological, None, false).unwrap()
+    }
+
+    fn current_branch(path: &Path) -> String {
+        get_current_branch(path).unwrap()
+    }
+
+    #[test]
+    fn test_parse_worktrees_reads_paths_and_branches() {
+        let porcelain = "\
+worktree /repo
+HEAD 1111111111111111111111111111111111111111
+branch refs/heads/main
+
+worktree /repo-wt/feature
+HEAD 2222222222222222222222222222222222222222
+branch refs/heads/feature/login
+
+worktree /repo-wt/detached
+HEAD 3333333333333333333333333333333333333333
+detached
+";
+        let expected = vec![
+            Worktree {
+                path: "/repo".into(),
+                branch: Some("main".into()),
+            },
+            Worktree {
+                path: "/repo-wt/feature".into(),
+                branch: Some("feature/login".into()),
+            },
+            Worktree {
+                path: "/repo-wt/detached".into(),
+                branch: None,
+            },
+        ];
+        assert_eq!(parse_worktrees(porcelain), expected);
+    }
+
+    #[test]
+    fn test_other_worktree_branches_excludes_the_current_branch() {
+        let worktrees = parse_worktrees(
+            "worktree /repo\nbranch refs/heads/main\n\nworktree /wt\nbranch refs/heads/topic\n",
+        );
+        let head = Head::Branch {
+            name: "topic".into(),
+        };
+        let actual = other_worktree_branches(worktrees, &head);
+        let expected: FxHashMap<String, PathBuf> = [("main".to_string(), PathBuf::from("/repo"))]
+            .into_iter()
+            .collect();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_git_error_message_fits_on_one_line() {
+        let stderr = "error: Your local changes to the following files would be overwritten by checkout:\n\tfile.txt\nPlease commit your changes or stash them before you switch branches.\nAborting\n";
+        assert_eq!(
+            git_error_message(stderr, &["switch", "topic"]),
+            "Your local changes to the following files would be overwritten by checkout: file.txt Please commit your changes or stash them before you switch branches. Aborting"
+        );
+        assert_eq!(
+            git_error_message("fatal: invalid reference: nope\n", &["switch", "nope"]),
+            "invalid reference: nope"
+        );
+        assert_eq!(
+            git_error_message("", &["switch", "nope"]),
+            "git switch nope failed"
+        );
+    }
+
+    #[test]
+    fn test_switch_branch_switches_to_a_local_branch() {
+        let dir = repository_with_topic_branch();
+        let repository = load(dir.path());
+
+        repository
+            .switch_branch(&BranchTarget::Local("topic".into()))
+            .unwrap();
+
+        assert_eq!(current_branch(dir.path()), "topic");
+        assert!(matches!(load(dir.path()).head(), Head::Branch { name } if name == "topic"));
+    }
+
+    #[test]
+    fn test_switch_branch_reports_unknown_branch() {
+        let dir = repository_with_topic_branch();
+        let repository = load(dir.path());
+
+        let err = repository
+            .switch_branch(&BranchTarget::Local("missing".into()))
+            .unwrap_err();
+
+        assert!(err.contains("missing"), "{err}");
+        assert_eq!(current_branch(dir.path()), "master");
+    }
+
+    #[test]
+    fn test_switch_branch_keeps_conflicting_local_changes() {
+        let dir = repository_with_topic_branch();
+        let path = dir.path();
+        fs::write(path.join("file.txt"), "edited\n").unwrap();
+        let repository = load(path);
+        assert!(repository.has_uncommitted_changes().unwrap());
+
+        let err = repository
+            .switch_branch(&BranchTarget::Local("topic".into()))
+            .unwrap_err();
+
+        assert!(err.contains("would be overwritten"), "{err}");
+        assert_eq!(current_branch(path), "master");
+        assert_eq!(
+            fs::read_to_string(path.join("file.txt")).unwrap(),
+            "edited\n"
+        );
+    }
+
+    #[test]
+    fn test_has_uncommitted_changes_ignores_untracked_files() {
+        let dir = repository_with_topic_branch();
+        let path = dir.path();
+        let repository = load(path);
+        assert!(!repository.has_uncommitted_changes().unwrap());
+
+        fs::write(path.join("untracked.txt"), "new\n").unwrap();
+        assert!(!repository.has_uncommitted_changes().unwrap());
+
+        fs::write(path.join("staged.txt"), "new\n").unwrap();
+        git(path, &["add", "staged.txt"]);
+        assert!(repository.has_uncommitted_changes().unwrap());
+    }
+
+    #[test]
+    fn test_switch_branch_tracks_a_remote_branch() {
+        let origin = repository_with_topic_branch();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("clone");
+        git(
+            dir.path(),
+            &["clone", "-q", origin.path().to_str().unwrap(), "clone"],
+        );
+        let repository = load(&path);
+
+        repository
+            .switch_branch(&BranchTarget::Remote("origin/topic".into()))
+            .unwrap();
+
+        assert_eq!(current_branch(&path), "topic");
+        assert_eq!(
+            fs::read_to_string(path.join("file.txt")).unwrap(),
+            "topic\n"
+        );
+
+        // A local branch of that name now exists, so git refuses to create it again.
+        git(&path, &["switch", "master"]);
+        let err = load(&path)
+            .switch_branch(&BranchTarget::Remote("origin/topic".into()))
+            .unwrap_err();
+        assert!(err.contains("already exists"), "{err}");
+        assert_eq!(current_branch(&path), "master");
+    }
+
+    #[test]
+    fn test_load_finds_branches_checked_out_in_other_worktrees() {
+        let dir = repository_with_topic_branch();
+        let path = dir.path();
+        let worktree_dir = tempfile::tempdir().unwrap();
+        let worktree_path = worktree_dir.path().join("topic-wt");
+        git(
+            path,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                worktree_path.to_str().unwrap(),
+                "topic",
+            ],
+        );
+
+        let from_main = load(path);
+        let branches: Vec<&String> = from_main.other_worktree_branches().keys().collect();
+        assert_eq!(branches, vec!["topic"]);
+        let listed_path = fs::canonicalize(&from_main.other_worktree_branches()["topic"]).unwrap();
+        assert_eq!(listed_path, fs::canonicalize(&worktree_path).unwrap());
+
+        let from_worktree = load(&worktree_path);
+        let branches: Vec<&String> = from_worktree.other_worktree_branches().keys().collect();
+        assert_eq!(branches, vec!["master"]);
+
+        // Git itself also refuses, which is the backstop if the list is stale.
+        let err = from_main
+            .switch_branch(&BranchTarget::Local("topic".into()))
+            .unwrap_err();
+        assert!(err.contains("topic"), "{err}");
+        assert_eq!(current_branch(path), "master");
+    }
+
+    fn branch(name: &str) -> Ref {
+        Ref::Branch {
+            name: name.into(),
+            target: CommitHash::from("a"),
+        }
+    }
+
+    fn remote_branch(name: &str) -> Ref {
+        Ref::RemoteBranch {
+            name: name.into(),
+            target: CommitHash::from("a"),
+        }
+    }
+
+    fn local(name: &str) -> BranchTarget {
+        BranchTarget::Local(name.into())
+    }
+
+    #[test]
+    fn test_branches_at_commit_single_local_branch() {
+        let refs = [branch("topic"), remote_branch("origin/topic")];
+        let refs: Vec<&Ref> = refs.iter().collect();
+
+        let actual = branches_at_commit(&refs, &["main", "topic"], Some("main"));
+
+        // the remote branch is covered by the local branch at the same commit
+        let expected = BranchesAtCommit {
+            targets: vec![local("topic")],
+            ..Default::default()
+        };
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_branches_at_commit_skips_current_branch() {
+        let refs = [branch("main"), remote_branch("origin/main")];
+        let refs: Vec<&Ref> = refs.iter().collect();
+
+        let actual = branches_at_commit(&refs, &["main"], Some("main"));
+
+        let expected = BranchesAtCommit {
+            has_current: true,
+            ..Default::default()
+        };
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_branches_at_commit_orders_locals_before_remotes() {
+        let refs = [
+            remote_branch("origin/feature/new"),
+            branch("b"),
+            remote_branch("origin/HEAD"),
+            branch("a"),
+            Ref::Tag {
+                name: "v1".into(),
+                target: CommitHash::from("a"),
+            },
+        ];
+        let refs: Vec<&Ref> = refs.iter().collect();
+
+        let actual = branches_at_commit(&refs, &["a", "b", "main"], Some("main"));
+
+        let expected = BranchesAtCommit {
+            targets: vec![
+                local("a"),
+                local("b"),
+                BranchTarget::Remote("origin/feature/new".into()),
+            ],
+            ..Default::default()
+        };
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_branches_at_commit_remote_with_local_branch_elsewhere() {
+        let refs = [remote_branch("origin/topic")];
+        let refs: Vec<&Ref> = refs.iter().collect();
+
+        let actual = branches_at_commit(&refs, &["main", "topic"], Some("main"));
+
+        let expected = BranchesAtCommit {
+            shadowed_remotes: vec![("origin/topic".into(), "topic".into())],
+            ..Default::default()
+        };
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_branches_at_commit_without_branch() {
+        let actual = branches_at_commit(&[], &["main"], None);
+
+        assert_eq!(actual, BranchesAtCommit::default());
+    }
 }

@@ -199,6 +199,7 @@ fn main() -> Result<()> {
 
     let ec = event::EventController::init();
     let mut refresh_view_context = None;
+    let mut refresh_message: Option<String> = None;
     let mut terminal = None;
 
     let ret: Result<()> = (|| loop {
@@ -231,12 +232,17 @@ fn main() -> Result<()> {
             &ec,
         );
 
+        if let Some(message) = refresh_message.take() {
+            app.success_notification(message);
+        }
+
         match app.run(terminal.as_mut().unwrap(), refresh_view_context)? {
             Ret::Quit => {
                 break Ok(());
             }
             Ret::Refresh(request) => {
                 refresh_view_context = Some(request.context);
+                refresh_message = request.message;
             }
         }
     })();

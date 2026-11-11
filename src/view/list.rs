@@ -171,6 +171,9 @@ impl<'a> ListView<'a> {
                 UserEvent::Refresh => {
                     self.refresh();
                 }
+                UserEvent::SwitchBranch => {
+                    self.tx.send(AppEvent::SwitchBranchAtSelectedCommit);
+                }
                 _ => {}
             }
         }

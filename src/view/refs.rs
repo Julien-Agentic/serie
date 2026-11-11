@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::{collections::HashSet, rc::Rc};
 
 use ratatui::{
     crossterm::event::KeyEvent,
@@ -9,7 +9,7 @@ use ratatui::{
 use crate::{
     app::AppContext,
     event::{AppEvent, Sender, UserEvent, UserEventWithCount},
-    git::Ref,
+    git::{BranchTarget, Ref},
     view::{ListRefreshViewContext, RefreshViewContext, RefsRefreshViewContext},
     widget::{
         commit_list::{CommitList, CommitListState},
@@ -30,12 +30,16 @@ impl<'a> RefsView<'a> {
     pub fn new(
         commit_list_state: CommitListState<'a>,
         refs: &[&Ref],
+        current_branch: Option<String>,
+        other_worktree_branches: HashSet<String>,
         ctx: Rc<AppContext>,
         tx: Sender,
     ) -> RefsView<'a> {
+        let mut ref_list_state = RefListState::new(refs);
+        ref_list_state.set_branch_status(current_branch, other_worktree_branches);
         RefsView {
             commit_list_state: Some(commit_list_state),
-            ref_list_state: RefListState::new(refs),
+            ref_list_state,
             ctx,
             tx,
         }
@@ -51,6 +55,9 @@ impl<'a> RefsView<'a> {
             }
             UserEvent::Cancel | UserEvent::Close | UserEvent::RefList => {
                 self.tx.send(AppEvent::CloseRefs);
+            }
+            UserEvent::SwitchBranch => {
+                self.switch_selected_branch();
             }
             UserEvent::NavigateDown | UserEvent::SelectDown => {
                 for _ in 0..count {
@@ -146,6 +153,18 @@ impl<'a> RefsView<'a> {
         if let Some(selected) = self.ref_list_state.selected_ref_name() {
             self.as_mut_list_state().select_ref(&selected)
         }
+    }
+
+    // Does nothing unless the selected row is a branch.
+    fn switch_selected_branch(&self) {
+        let target = if let Some(name) = self.ref_list_state.selected_local_branch() {
+            BranchTarget::Local(name)
+        } else if let Some(name) = self.ref_list_state.selected_remote_branch() {
+            BranchTarget::Remote(name)
+        } else {
+            return;
+        };
+        self.tx.send(AppEvent::SwitchBranch(target));
     }
 
     fn copy_ref_name(&self) {

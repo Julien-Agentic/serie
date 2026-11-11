@@ -17,7 +17,7 @@ go_to_bottom = ["shift-g"]
 scroll_down = ["ctrl-e"]
 scroll_up = ["ctrl-y"]
 page_up = ["ctrl-b", "pageup"]
-page_down = ["ctrl-f", "pagedown", "space"]
+page_down = ["ctrl-f", "pagedown"]
 half_page_up = ["ctrl-u"]
 half_page_down = ["ctrl-d"]
 select_top = ["shift-h"]
@@ -34,6 +34,8 @@ ignore_case_toggle = ["ctrl-g"]
 fuzzy_toggle = ["ctrl-x"]
 mark_toggle = ["m"]
 refresh = ["shift-r"]
+# switch to the branch at the selected commit; pages down in views without a branch
+switch_branch = ["space"]
 
 user_command_1 = ["d"]
 

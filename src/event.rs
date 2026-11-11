@@ -13,7 +13,7 @@ use serde::{
     Deserialize,
 };
 
-use crate::view::RefreshViewContext;
+use crate::{git::BranchTarget, view::RefreshViewContext};
 
 #[derive(Debug)]
 pub enum AppEvent {
@@ -31,6 +31,8 @@ pub enum AppEvent {
     SelectNewerCommit,
     SelectOlderCommit,
     SelectParentCommit,
+    SwitchBranch(BranchTarget),
+    SwitchBranchAtSelectedCommit,
     CopyToClipboard {
         name: String,
         value: String,
@@ -234,6 +236,7 @@ pub enum UserEvent {
     FuzzyToggle,
     MarkToggle,
     Refresh,
+    SwitchBranch,
     ShortCopy,
     FullCopy,
     Unknown,
@@ -299,6 +302,7 @@ impl<'de> Deserialize<'de> for UserEvent {
                         "fuzzy_toggle" => Ok(UserEvent::FuzzyToggle),
                         "mark_toggle" => Ok(UserEvent::MarkToggle),
                         "refresh" => Ok(UserEvent::Refresh),
+                        "switch_branch" => Ok(UserEvent::SwitchBranch),
                         "short_copy" => Ok(UserEvent::ShortCopy),
                         "full_copy" => Ok(UserEvent::FullCopy),
                         _ => {
