@@ -1374,31 +1374,49 @@ mod tests {
     fn test_branch_tip_navigation() {
         let target = CommitHash::from("unused");
         let refs = vec![
-            (0, Ref::Branch {
-                name: "main".into(),
-                target: target.clone(),
-            }),
-            (1, Ref::Tag {
-                name: "v1".into(),
-                target: target.clone(),
-            }),
-            (2, Ref::Branch {
-                name: "topic".into(),
-                target: target.clone(),
-            }),
-            (2, Ref::RemoteBranch {
-                name: "origin/topic".into(),
-                target: target.clone(),
-            }),
-            (3, Ref::Stash {
-                name: "stash@{0}".into(),
-                message: "saved".into(),
-                target: target.clone(),
-            }),
-            (5, Ref::RemoteBranch {
-                name: "origin/other".into(),
-                target,
-            }),
+            (
+                0,
+                Ref::Branch {
+                    name: "main".into(),
+                    target: target.clone(),
+                },
+            ),
+            (
+                1,
+                Ref::Tag {
+                    name: "v1".into(),
+                    target: target.clone(),
+                },
+            ),
+            (
+                2,
+                Ref::Branch {
+                    name: "topic".into(),
+                    target: target.clone(),
+                },
+            ),
+            (
+                2,
+                Ref::RemoteBranch {
+                    name: "origin/topic".into(),
+                    target: target.clone(),
+                },
+            ),
+            (
+                3,
+                Ref::Stash {
+                    name: "stash@{0}".into(),
+                    message: "saved".into(),
+                    target: target.clone(),
+                },
+            ),
+            (
+                5,
+                Ref::RemoteBranch {
+                    name: "origin/other".into(),
+                    target,
+                },
+            ),
         ];
         with_commit_list_state_and_refs(
             &["a", "b", "c", "d", "e", "f", "g"],

@@ -974,7 +974,9 @@ impl App<'_> {
             1 => self.copy_to_clipboard("Branch Name".into(), names.remove(0)),
             _ => {
                 names.truncate(9);
-                let choices: Vec<String> = names.iter().enumerate()
+                let choices: Vec<String> = names
+                    .iter()
+                    .enumerate()
                     .map(|(i, name)| format!("[{}] {name}", i + 1))
                     .collect();
                 self.info_notification(format!("Copy branch name: {}", choices.join("  ")));

@@ -1240,24 +1240,42 @@ detached
 
     #[test]
     fn test_branch_names_for_copy_prefers_locals_and_includes_current() {
-        let refs = [branch("topic"), remote_branch("origin/main"), branch("main")];
+        let refs = [
+            branch("topic"),
+            remote_branch("origin/main"),
+            branch("main"),
+        ];
         let refs: Vec<&Ref> = refs.iter().collect();
         assert_eq!(branch_names_for_copy(&refs), vec!["main", "topic"]);
     }
 
     #[test]
     fn test_branch_names_for_copy_falls_back_to_remote_names() {
-        let refs = [remote_branch("origin/topic"), remote_branch("origin/HEAD"), remote_branch("upstream/main")];
+        let refs = [
+            remote_branch("origin/topic"),
+            remote_branch("origin/HEAD"),
+            remote_branch("upstream/main"),
+        ];
         let refs: Vec<&Ref> = refs.iter().collect();
-        assert_eq!(branch_names_for_copy(&refs), vec!["origin/topic", "upstream/main"]);
+        assert_eq!(
+            branch_names_for_copy(&refs),
+            vec!["origin/topic", "upstream/main"]
+        );
     }
 
     #[test]
     fn test_branch_names_for_copy_ignores_tags_stashes_and_remote_head() {
         let target = CommitHash::from("unused");
         let refs = [
-            Ref::Tag { name: "v1".into(), target: target.clone() },
-            Ref::Stash { name: "stash@{0}".into(), message: "saved".into(), target },
+            Ref::Tag {
+                name: "v1".into(),
+                target: target.clone(),
+            },
+            Ref::Stash {
+                name: "stash@{0}".into(),
+                message: "saved".into(),
+                target,
+            },
             remote_branch("origin/HEAD"),
         ];
         let refs: Vec<&Ref> = refs.iter().collect();

@@ -325,11 +325,17 @@ mod tests {
                     UserEvent::NavigateLeft,
                 ),
                 (
-                    KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL | KeyModifiers::SHIFT),
+                    KeyEvent::new(
+                        KeyCode::Char('l'),
+                        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+                    ),
                     UserEvent::NavigateRight,
                 ),
                 (
-                    KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL | KeyModifiers::SHIFT | KeyModifiers::ALT),
+                    KeyEvent::new(
+                        KeyCode::Char('l'),
+                        KeyModifiers::CONTROL | KeyModifiers::SHIFT | KeyModifiers::ALT,
+                    ),
                     UserEvent::NavigateRight,
                 ),
                 (
