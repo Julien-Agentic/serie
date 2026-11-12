@@ -737,6 +737,12 @@
         },
         "copy_branch_name": {
           "$ref": "#/definitions/keybindArray"
+        },
+        "delete_branch": {
+          "$ref": "#/definitions/keybindArray"
+        },
+        "force_delete_branch": {
+          "$ref": "#/definitions/keybindArray"
         }
       },
       "patternProperties": {

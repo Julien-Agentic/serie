@@ -40,7 +40,8 @@ The default key bindings can be overridden.
 | <kbd>R</kbd>                         | Refresh                                            | `refresh`                                    |
 | <kbd>c</kbd>                         | Copy commit short hash                             | `short_copy`                                |
 | <kbd>C</kbd>                         | Copy branch name                                   | `copy_branch_name`                          |
-| <kbd>d</kbd>                         | Toggle custom user command view                    | `user_command_1`                             |
+| <kbd>d/D</kbd>                       | Delete/force-delete a branch (confirm first)        | `delete_branch` `force_delete_branch`       |
+| <kbd>v</kbd>                         | Toggle custom user command view                    | `user_command_1`                             |
 
 #### Commit Detail
 
@@ -57,7 +58,8 @@ The default key bindings can be overridden.
 | <kbd>R</kbd>                         | Refresh                         | `refresh`                       |
 | <kbd>c</kbd>                         | Copy commit short hash          | `short_copy`                   |
 | <kbd>C</kbd>                         | Copy branch name                | `copy_branch_name`             |
-| <kbd>d</kbd>                         | Toggle custom user command view | `user_command_1`                |
+| <kbd>d/D</kbd>                       | Delete/force-delete a branch (confirm first) | `delete_branch` `force_delete_branch` |
+| <kbd>v</kbd>                         | Toggle custom user command view | `user_command_1`                |
 
 #### Refs List
 
@@ -69,6 +71,7 @@ The default key bindings can be overridden.
 | <kbd>g/G</kbd>                                     | Go to top/bottom | `go_to_top` `go_to_bottom`       |
 | <kbd>Right/Left</kbd> <kbd>l/h</kbd>               | Open/Close node  | `navigate_right` `navigate_left` |
 | <kbd>Space</kbd>                                   | Switch to the selected branch | `switch_branch`     |
+| <kbd>d/D</kbd>                                     | Delete/force-delete selected branch (confirm first) | `delete_branch` `force_delete_branch` |
 | <kbd>R</kbd>                                       | Refresh          | `refresh`                        |
 | <kbd>c/C</kbd>                                     | Copy ref name    | `short_copy` `copy_branch_name`  |
 
@@ -84,6 +87,40 @@ without a local branch is offered too and creates a tracking local branch.
 A commit with no branch is left alone: Serie never detaches HEAD. In the
 commit detail, user command and help views, <kbd>Space</kbd> scrolls a page
 down as before.
+
+### Branch deletion
+
+In the commit list and detail view, <kbd>d</kbd> deletes a branch at the selected
+commit. If several branches point there, choose a numbered **local** or **REMOTE**
+entry; <kbd>n</kbd> cycles pages when there are more than nine choices. In the
+refs panel, it targets the selected branch leaf, not a folder or tag.
+
+Every deletion asks for <kbd>y</kbd> confirmation; any other key cancels. A local
+delete uses `git branch -d`. If Git refuses an unmerged branch, nothing is deleted:
+use <kbd>D</kbd> and confirm again to explicitly force-delete that local branch
+with `git branch -D`. <kbd>D</kbd> does not force-delete remote branches.
+
+Deleting a **REMOTE** entry removes the branch **from the server**, not merely
+its remote-tracking reference. It requires its own explicit confirmation and
+leaves local branches alone. To delete both local and remote, perform and confirm
+the two actions separately. Remote deletion uses a lease and refuses if the
+server tip no longer matches the loaded remote-tracking reference; refresh or
+fetch and review before retrying.
+Serie never prompts for credentials, SSH passphrases or host keys during a
+remote deletion: set up an SSH agent or a credential helper, otherwise the
+push fails and the error is shown.
+
+Deletion refuses the current branch and branches checked out in any worktree,
+even in force mode. Remote deletion also protects active local branches that
+track it. Worktrees are re-read immediately before deletion, and branch tips
+must still match the last refresh. Nothing is switched, stashed or discarded.
+Git failures are shown on the status line; successful deletion refreshes the view.
+
+Diff review moved from <kbd>d</kbd> to <kbd>v</kbd> (`user_command_1`). Custom
+<kbd>D</kbd> review bindings should move to <kbd>V</kbd> (`user_command_2`),
+otherwise they override the new force-delete binding.
+
+### Copying and navigation
 
 In the commit list and detail view, <kbd>C</kbd> copies a local branch name
 at the selected commit, including the current branch. If several local branches

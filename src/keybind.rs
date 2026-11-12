@@ -268,6 +268,24 @@ mod tests {
     }
 
     #[test]
+    fn test_default_deletion_and_review_keybindings() {
+        let custom = toml::from_str("user_command_2 = ['shift-v']").unwrap();
+        let keybind = KeyBind::new(Some(custom));
+        for (key, modifiers, event) in [
+            ('d', KeyModifiers::NONE, UserEvent::DeleteBranch),
+            ('d', KeyModifiers::SHIFT, UserEvent::ForceDeleteBranch),
+            ('v', KeyModifiers::NONE, UserEvent::UserCommand(1)),
+            ('v', KeyModifiers::SHIFT, UserEvent::UserCommand(2)),
+        ] {
+            assert_eq!(
+                keybind.get(&KeyEvent::new(KeyCode::Char(key), modifiers)),
+                Some(&event)
+            );
+            assert!(!event.is_countable());
+        }
+    }
+
+    #[test]
     fn test_default_copy_keybindings() {
         let keybind = KeyBind::new(None);
         assert_eq!(

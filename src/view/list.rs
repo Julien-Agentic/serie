@@ -180,6 +180,12 @@ impl<'a> ListView<'a> {
                 UserEvent::Refresh => {
                     self.refresh();
                 }
+                UserEvent::DeleteBranch | UserEvent::ForceDeleteBranch => {
+                    self.tx.send(AppEvent::DeleteBranchAtCommit {
+                        hash: self.as_list_state().selected_commit_hash().clone(),
+                        force: event == UserEvent::ForceDeleteBranch,
+                    });
+                }
                 UserEvent::SwitchBranch => {
                     self.tx.send(AppEvent::SwitchBranchAtSelectedCommit);
                 }

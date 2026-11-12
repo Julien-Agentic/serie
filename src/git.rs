@@ -202,6 +202,162 @@ impl Repository {
         result.map(|_| ())
     }
 
+    pub fn check_branch_deletion(&self, target: &BranchTarget) -> std::result::Result<(), String> {
+        self.prepare_deletion(target).map(|_| ())
+    }
+
+    /// Re-read worktrees before every deletion, including force retries.
+    fn prepare_deletion(
+        &self,
+        target: &BranchTarget,
+    ) -> std::result::Result<PreparedDeletion, String> {
+        let remote = match target {
+            BranchTarget::Local(_) => None,
+            BranchTarget::Remote(name) => Some(self.remote_branch_parts(name)?),
+        };
+        // The local branch with the target's own name, even if it tracks elsewhere.
+        let same_name = remote
+            .as_ref()
+            .map_or_else(|| target.name().to_string(), |(_, branch)| branch.clone());
+        // Local branches whose upstream is the remote branch being deleted.
+        let mut tracking = Vec::new();
+        if let BranchTarget::Remote(name) = target {
+            let upstreams = run_git(
+                &self.path,
+                &[
+                    "for-each-ref",
+                    "--format=%(refname)%00%(upstream)",
+                    "refs/heads/",
+                ],
+            )?;
+            let reference = format!("refs/remotes/{name}");
+            for line in upstreams.lines() {
+                if let Some((local, upstream)) = line.split_once('\0') {
+                    if upstream == reference {
+                        if let Some(local) = local.strip_prefix("refs/heads/") {
+                            tracking.push(local.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        let worktrees =
+            parse_worktrees(&run_git(&self.path, &["worktree", "list", "--porcelain"])?);
+        for worktree in &worktrees {
+            let Some(branch) = &worktree.branch else {
+                continue;
+            };
+            let path = worktree.path.display();
+            if tracking.contains(branch) {
+                return Err(format!(
+                    "'{branch}' tracks '{}' and is checked out in worktree {path}; not deleting",
+                    target.name()
+                ));
+            }
+            if *branch == same_name {
+                return Err(format!(
+                    "'{branch}' is checked out in worktree {path}; not deleting"
+                ));
+            }
+        }
+        let expected = self.deletion_ref(target)?;
+        Ok(PreparedDeletion { expected, remote })
+    }
+
+    // Refuse stale selections: an agent may have moved the branch since the last refresh.
+    fn deletion_ref(&self, target: &BranchTarget) -> std::result::Result<String, String> {
+        let reference = match target {
+            BranchTarget::Local(name) => format!("refs/heads/{name}"),
+            BranchTarget::Remote(name) => format!("refs/remotes/{name}"),
+        };
+        let expected = self
+            .all_refs()
+            .into_iter()
+            .find_map(|r| match (target, r) {
+                (
+                    BranchTarget::Local(name),
+                    Ref::Branch {
+                        name: actual,
+                        target,
+                    },
+                )
+                | (
+                    BranchTarget::Remote(name),
+                    Ref::RemoteBranch {
+                        name: actual,
+                        target,
+                    },
+                ) if name == actual => Some(target.as_str()),
+                _ => None,
+            })
+            .ok_or_else(|| "Branch no longer exists; refresh first".to_string())?;
+        let actual = run_git(&self.path, &["rev-parse", "--verify", &reference])?;
+        if actual.trim() != expected {
+            return Err("Branch changed since the last refresh; refresh before deleting".into());
+        }
+        Ok(expected.into())
+    }
+
+    fn remote_branch_parts(&self, name: &str) -> std::result::Result<(String, String), String> {
+        let remotes = run_git(&self.path, &["remote"])?;
+        let remote = remotes
+            .lines()
+            .filter(|r| name.starts_with(&format!("{r}/")))
+            .max_by_key(|r| r.len())
+            .ok_or_else(|| format!("No configured remote for '{name}'"))?;
+        let branch = &name[remote.len() + 1..];
+        if branch == "HEAD" || branch.is_empty() {
+            return Err("Remote HEAD aliases cannot be deleted".into());
+        }
+        Ok((remote.into(), branch.into()))
+    }
+
+    /// Safe local delete by default. Remote deletion uses a lease so a newer
+    /// remote tip cannot be removed using a stale remote-tracking reference.
+    pub fn delete_branch(
+        &self,
+        target: &BranchTarget,
+        force: bool,
+    ) -> std::result::Result<(), DeleteBranchError> {
+        if force && matches!(target, BranchTarget::Remote(_)) {
+            return Err(DeleteBranchError::Other(
+                "Remote force deletion is not supported".into(),
+            ));
+        }
+        let PreparedDeletion { expected, remote } = self
+            .prepare_deletion(target)
+            .map_err(DeleteBranchError::Other)?;
+        match (target, remote) {
+            (BranchTarget::Local(name), _) => {
+                let mode = if force { "-D" } else { "-d" };
+                // The C locale keeps Git's "not fully merged" message matchable.
+                run_git_with(&self.path, &["branch", mode, "--", name], |command| {
+                    command.env("LC_ALL", "C");
+                })
+                .map(|_| ())
+                .map_err(|error| {
+                    if !force && error.contains("not fully merged") {
+                        DeleteBranchError::NotMerged(error)
+                    } else {
+                        DeleteBranchError::Other(error)
+                    }
+                })
+            }
+            (BranchTarget::Remote(_), remote) => {
+                let (remote, branch) = remote.expect("remote targets are split into parts");
+                let reference = format!("refs/heads/{branch}");
+                let lease = format!("--force-with-lease={reference}:{expected}");
+                run_git_with(
+                    &self.path,
+                    &["push", &lease, "--delete", "--", &remote, &reference],
+                    without_prompts,
+                )
+                .map(|_| ())
+                .map_err(DeleteBranchError::Other)
+            }
+        }
+    }
+
     pub fn commit(&self, commit_hash: &CommitHash) -> Option<&Commit> {
         self.commit_map.get(commit_hash)
     }
@@ -259,6 +415,29 @@ impl Repository {
         branches_at_commit(&self.refs(commit_hash), &local_branches, current)
     }
 
+    /// Include local and remote branches as distinct deletion choices.
+    pub fn branches_for_deletion(&self, commit_hash: &CommitHash) -> Vec<BranchTarget> {
+        let refs = self.refs(commit_hash);
+        let mut locals = Vec::new();
+        let mut remotes = Vec::new();
+        for r in refs {
+            match r {
+                Ref::Branch { name, .. } => locals.push(name.clone()),
+                Ref::RemoteBranch { name, .. } if !name.ends_with("/HEAD") => {
+                    remotes.push(name.clone())
+                }
+                _ => {}
+            }
+        }
+        locals.sort_unstable();
+        remotes.sort_unstable();
+        locals
+            .into_iter()
+            .map(BranchTarget::Local)
+            .chain(remotes.into_iter().map(BranchTarget::Remote))
+            .collect()
+    }
+
     /// Prefer local branch names for copying; fall back to remote-tracking names.
     /// Unlike switching, copying includes the current branch and occupied branches.
     pub fn branch_names_for_copy(&self, commit_hash: &CommitHash) -> Vec<String> {
@@ -297,6 +476,19 @@ fn branch_names_for_copy(refs: &[&Ref]) -> Vec<String> {
     names.sort_unstable();
     names.dedup();
     names
+}
+
+struct PreparedDeletion {
+    /// The branch tip loaded at the last refresh, verified against the repository.
+    expected: String,
+    /// Remote name and branch name, for remote targets.
+    remote: Option<(String, String)>,
+}
+
+#[derive(Debug)]
+pub enum DeleteBranchError {
+    NotMerged(String),
+    Other(String),
 }
 
 /// A branch the user asked to switch to.
@@ -443,10 +635,18 @@ pub fn save_graph_lanes(path: &Path, lanes: Option<usize>) -> std::result::Resul
 }
 
 fn run_git(path: &Path, args: &[&str]) -> std::result::Result<String, String> {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(path)
-        .stdin(Stdio::null())
+    run_git_with(path, args, |_| {})
+}
+
+fn run_git_with(
+    path: &Path,
+    args: &[&str],
+    configure: impl FnOnce(&mut Command),
+) -> std::result::Result<String, String> {
+    let mut command = Command::new("git");
+    command.args(args).current_dir(path).stdin(Stdio::null());
+    configure(&mut command);
+    let output = command
         .output()
         .map_err(|e| format!("Failed to run git {}: {e}", args.join(" ")))?;
     if output.status.success() {
@@ -460,6 +660,27 @@ fn run_git(path: &Path, args: &[&str]) -> std::result::Result<String, String> {
 }
 
 // Git errors can span several lines, but they are shown on the one-line status bar.
+/// Network commands must fail instead of prompting: Serie owns the terminal, so a
+/// credential, passphrase or host-key prompt would draw over the UI and block it.
+fn without_prompts(command: &mut Command) {
+    command.env("GIT_TERMINAL_PROMPT", "0");
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        // A new session has no controlling terminal, so SSH cannot open /dev/tty.
+        // Agents, keychains and credential helpers keep working.
+        // SAFETY: setsid is async-signal-safe and touches no parent state.
+        unsafe {
+            command.pre_exec(|| {
+                if libc::setsid() == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+    }
+}
+
 fn git_error_message(stderr: &str, args: &[&str]) -> String {
     let message = stderr.split_whitespace().collect::<Vec<_>>().join(" ");
     let message = message
@@ -1064,6 +1285,198 @@ detached
             git_error_message("", &["switch", "nope"]),
             "git switch nope failed"
         );
+    }
+
+    #[test]
+    fn test_delete_branch_safe_delete_preserves_working_tree() {
+        let dir = repository_with_topic_branch();
+        let path = dir.path();
+        git(path, &["branch", "merged/topic"]);
+        fs::write(path.join("file.txt"), "agent changes\n").unwrap();
+        let repository = load(path);
+        repository
+            .delete_branch(&local("merged/topic"), false)
+            .unwrap();
+        assert!(run_git(path, &["show-ref", "--verify", "refs/heads/merged/topic"]).is_err());
+        assert_eq!(
+            fs::read_to_string(path.join("file.txt")).unwrap(),
+            "agent changes\n"
+        );
+        assert_eq!(current_branch(path), "master");
+    }
+
+    #[test]
+    fn test_delete_unmerged_branch_requires_explicit_force() {
+        let dir = repository_with_topic_branch();
+        let path = dir.path();
+        let repository = load(path);
+        assert!(matches!(
+            repository.delete_branch(&local("topic"), false),
+            Err(DeleteBranchError::NotMerged(_))
+        ));
+        assert!(run_git(path, &["show-ref", "--verify", "refs/heads/topic"]).is_ok());
+        repository.delete_branch(&local("topic"), true).unwrap();
+        assert!(run_git(path, &["show-ref", "--verify", "refs/heads/topic"]).is_err());
+    }
+
+    #[test]
+    fn test_delete_branch_refuses_current_and_new_worktrees_even_with_force() {
+        let dir = repository_with_topic_branch();
+        let path = dir.path();
+        let repository = load(path);
+        let worktree = tempfile::tempdir().unwrap();
+        let worktree_path = worktree.path().join("agent");
+        git(
+            path,
+            &["worktree", "add", worktree_path.to_str().unwrap(), "topic"],
+        );
+        for force in [false, true] {
+            for name in ["master", "topic"] {
+                let error = repository.delete_branch(&local(name), force).unwrap_err();
+                assert!(
+                    matches!(error, DeleteBranchError::Other(ref text) if text.contains("checked out in worktree")),
+                    "{error:?}"
+                );
+                assert!(run_git(
+                    path,
+                    &["show-ref", "--verify", &format!("refs/heads/{name}")]
+                )
+                .is_ok());
+            }
+        }
+    }
+
+    #[test]
+    fn test_delete_branch_refuses_stale_and_missing_selections() {
+        let dir = repository_with_topic_branch();
+        let path = dir.path();
+        let repository = load(path);
+        git(path, &["branch", "-f", "topic", "master"]);
+        let error = repository.delete_branch(&local("topic"), true).unwrap_err();
+        assert!(
+            matches!(error, DeleteBranchError::Other(ref text) if text.contains("changed since")),
+            "{error:?}"
+        );
+        assert!(repository.delete_branch(&local("missing"), true).is_err());
+        assert!(run_git(path, &["show-ref", "--verify", "refs/heads/topic"]).is_ok());
+    }
+
+    fn repository_with_remote_topic() -> (TempDir, TempDir) {
+        let dir = repository_with_topic_branch();
+        let remote = tempfile::tempdir().unwrap();
+        git(remote.path(), &["init", "--bare"]);
+        git(
+            dir.path(),
+            &["remote", "add", "origin", remote.path().to_str().unwrap()],
+        );
+        git(dir.path(), &["push", "origin", "topic"]);
+        (dir, remote)
+    }
+
+    #[test]
+    fn test_delete_remote_branch_leaves_local_branch_unchanged() {
+        let (dir, remote) = repository_with_remote_topic();
+        let repository = load(dir.path());
+        let target = BranchTarget::Remote("origin/topic".into());
+        assert!(repository.delete_branch(&target, true).is_err());
+        assert!(run_git(remote.path(), &["show-ref", "--verify", "refs/heads/topic"]).is_ok());
+        repository.delete_branch(&target, false).unwrap();
+        assert!(run_git(remote.path(), &["show-ref", "--verify", "refs/heads/topic"]).is_err());
+        assert!(run_git(dir.path(), &["show-ref", "--verify", "refs/heads/topic"]).is_ok());
+    }
+
+    #[test]
+    fn test_delete_remote_branch_refuses_a_newer_server_tip() {
+        let (dir, remote) = repository_with_remote_topic();
+        let repository = load(dir.path());
+        let new_tip = run_git(dir.path(), &["rev-parse", "master"]).unwrap();
+        git(
+            remote.path(),
+            &["update-ref", "refs/heads/topic", new_tip.trim()],
+        );
+        let target = BranchTarget::Remote("origin/topic".into());
+        assert!(repository.delete_branch(&target, false).is_err());
+        assert_eq!(
+            run_git(remote.path(), &["rev-parse", "refs/heads/topic"]).unwrap(),
+            new_tip
+        );
+    }
+
+    #[test]
+    fn test_delete_remote_protects_active_local_upstream_with_a_different_name() {
+        let (dir, remote) = repository_with_remote_topic();
+        // A same-named tag must not make upstream branch names ambiguous.
+        git(dir.path(), &["tag", "master"]);
+        git(
+            dir.path(),
+            &["branch", "--set-upstream-to=origin/topic", "master"],
+        );
+        let repository = load(dir.path());
+        let target = BranchTarget::Remote("origin/topic".into());
+        let error = repository.delete_branch(&target, false).unwrap_err();
+        assert!(
+            matches!(error, DeleteBranchError::Other(ref text) if text.contains("'master' tracks 'origin/topic' and is checked out in worktree")),
+            "{error:?}"
+        );
+        assert!(run_git(remote.path(), &["show-ref", "--verify", "refs/heads/topic"]).is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_delete_remote_branch_cannot_prompt_on_the_terminal() {
+        let dir = repository_with_topic_branch();
+        let path = dir.path();
+        let topic = run_git(path, &["rev-parse", "topic"]).unwrap();
+        git(
+            path,
+            &["update-ref", "refs/remotes/origin/topic", topic.trim()],
+        );
+        git(path, &["remote", "add", "origin", "prompt-host:repo.git"]);
+        // Stands in for SSH: record whether a passphrase prompt could reach a terminal.
+        let probe = path.join("tty-probe");
+        let ssh = path.join("fake-ssh");
+        fs::write(
+            &ssh,
+            format!(
+                "#!/bin/sh\nif : </dev/tty 2>/dev/null; then echo tty; else echo no-tty; fi > '{}'\necho \"$GIT_TERMINAL_PROMPT\" >> '{}'\nexit 1\n",
+                probe.display(),
+                probe.display()
+            ),
+        )
+        .unwrap();
+        git(path, &["config", "core.sshCommand", "sh fake-ssh"]);
+        let repository = load(path);
+        let target = BranchTarget::Remote("origin/topic".into());
+        assert!(repository.delete_branch(&target, false).is_err());
+        assert_eq!(fs::read_to_string(probe).unwrap(), "no-tty\n0\n");
+    }
+
+    #[test]
+    fn test_delete_remote_rejects_head_alias() {
+        let (dir, _) = repository_with_remote_topic();
+        git(
+            dir.path(),
+            &[
+                "symbolic-ref",
+                "refs/remotes/origin/HEAD",
+                "refs/remotes/origin/topic",
+            ],
+        );
+        let repository = load(dir.path());
+        assert!(repository
+            .delete_branch(&BranchTarget::Remote("origin/HEAD".into()), false)
+            .is_err());
+        let tip = repository
+            .all_refs()
+            .into_iter()
+            .find(|r| r.name() == "topic")
+            .unwrap()
+            .target()
+            .clone();
+        let choices = repository.branches_for_deletion(&tip);
+        assert!(choices.contains(&local("topic")));
+        assert!(choices.contains(&BranchTarget::Remote("origin/topic".into())));
+        assert!(!choices.contains(&BranchTarget::Remote("origin/HEAD".into())));
     }
 
     #[test]

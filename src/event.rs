@@ -37,6 +37,14 @@ pub enum AppEvent {
     SwitchBranch(BranchTarget),
     SwitchBranchAtSelectedCommit,
     CopyBranchName(CommitHash),
+    DeleteBranch {
+        target: BranchTarget,
+        force: bool,
+    },
+    DeleteBranchAtCommit {
+        hash: CommitHash,
+        force: bool,
+    },
     ResizeGraph {
         wider: bool,
         steps: usize,
@@ -108,6 +116,17 @@ pub struct EventController {
 }
 
 impl EventController {
+    #[cfg(test)]
+    pub fn without_input() -> Self {
+        let (tx, rx) = mpsc::channel();
+        Self {
+            tx: Sender { tx },
+            rx: Receiver { rx },
+            stop: Arc::new(AtomicBool::new(false)),
+            handle: Arc::new(Mutex::new(None)),
+        }
+    }
+
     pub fn init() -> Self {
         let (tx, rx) = mpsc::channel();
         let tx = Sender { tx };
@@ -252,6 +271,8 @@ pub enum UserEvent {
     ShortCopy,
     FullCopy,
     CopyBranchName,
+    DeleteBranch,
+    ForceDeleteBranch,
     Unknown,
 }
 
@@ -323,6 +344,8 @@ impl<'de> Deserialize<'de> for UserEvent {
                         "short_copy" => Ok(UserEvent::ShortCopy),
                         "full_copy" => Ok(UserEvent::FullCopy),
                         "copy_branch_name" => Ok(UserEvent::CopyBranchName),
+                        "delete_branch" => Ok(UserEvent::DeleteBranch),
+                        "force_delete_branch" => Ok(UserEvent::ForceDeleteBranch),
                         _ => {
                             let msg = format!("Unknown user event: {value}");
                             Err(de::Error::custom(msg))

@@ -56,6 +56,14 @@ impl<'a> RefsView<'a> {
             UserEvent::Cancel | UserEvent::Close | UserEvent::RefList => {
                 self.tx.send(AppEvent::CloseRefs);
             }
+            UserEvent::DeleteBranch | UserEvent::ForceDeleteBranch => {
+                if let Some(target) = self.selected_branch_target() {
+                    self.tx.send(AppEvent::DeleteBranch {
+                        target,
+                        force: event == UserEvent::ForceDeleteBranch,
+                    });
+                }
+            }
             UserEvent::SwitchBranch => {
                 self.switch_selected_branch();
             }
@@ -157,14 +165,20 @@ impl<'a> RefsView<'a> {
 
     // Does nothing unless the selected row is a branch.
     fn switch_selected_branch(&self) {
-        let target = if let Some(name) = self.ref_list_state.selected_local_branch() {
-            BranchTarget::Local(name)
-        } else if let Some(name) = self.ref_list_state.selected_remote_branch() {
-            BranchTarget::Remote(name)
-        } else {
-            return;
-        };
-        self.tx.send(AppEvent::SwitchBranch(target));
+        if let Some(target) = self.selected_branch_target() {
+            self.tx.send(AppEvent::SwitchBranch(target));
+        }
+    }
+
+    fn selected_branch_target(&self) -> Option<BranchTarget> {
+        self.ref_list_state
+            .selected_local_branch()
+            .map(BranchTarget::Local)
+            .or_else(|| {
+                self.ref_list_state
+                    .selected_remote_branch()
+                    .map(BranchTarget::Remote)
+            })
     }
 
     fn copy_ref_name(&self) {

@@ -107,6 +107,12 @@ impl<'a> DetailView<'a> {
             UserEvent::FullCopy => {
                 self.copy_commit_hash();
             }
+            UserEvent::DeleteBranch | UserEvent::ForceDeleteBranch => {
+                self.tx.send(AppEvent::DeleteBranchAtCommit {
+                    hash: self.commit.commit_hash.clone(),
+                    force: event == UserEvent::ForceDeleteBranch,
+                });
+            }
             UserEvent::CopyBranchName => {
                 self.tx
                     .send(AppEvent::CopyBranchName(self.commit.commit_hash.clone()));

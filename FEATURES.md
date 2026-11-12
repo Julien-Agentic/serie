@@ -50,7 +50,7 @@ happens on feature branches.
 
 ### Delta diff rendering — Configured
 
-- Keep `d` as the shortcut for the selected commit's diff.
+- Use `v` as the shortcut for the selected commit's diff (`d` is now deletion).
 - Render syntax-highlighted diffs with `git-delta` inside Serie's existing pane.
 - Use side-by-side layout with unlimited line wrapping.
 - Size the output to the pane width, accounting for Serie's horizontal padding.
@@ -66,11 +66,11 @@ rendering is the configuration-only workaround currently enabled.
 
 ### Hunk commit review — Configured
 
-- Press `Shift-D` to open the selected commit in Hunk.
+- Press `Shift-V` to open the selected commit in Hunk (`Shift-D` is now force deletion).
 - Temporarily give Hunk control of the terminal; quit with `q` to return to Serie.
 - Navigate changed files using Hunk's selectable sidebar.
 - Press `e` to open the selected file in the configured editor.
-- Keep this workflow alongside Delta rather than replacing `d`.
+- Keep this workflow alongside Delta rather than replacing `v`.
 
 Configuration: `~/.config/serie/config.toml`.
 
@@ -144,18 +144,25 @@ worktree picker.
 - Support counts, such as `3}`. Only selection changes; `Space` still switches
   branches. Braces remain ordinary text while typing a search.
 
-### Branch creation — Proposed
+### Branch deletion — Implemented
 
-- Prompt for a new branch name.
-- Explicitly choose HEAD or the selected commit as the starting point.
-- Offer an option to switch to the new branch after creating it.
-
-### Branch deletion — Proposed
-
-- Delete a local branch, its remote counterpart, or both.
-- Confirm before deleting; never delete a branch checked out in a worktree.
-- Added after the evaluation; safeguards are still open in
-  [FRICTION.md](FRICTION.md).
+- `d` requests safe deletion; `D` requests force deletion of a local branch.
+- Available in the commit list, commit details and refs panel. Multiple branches
+  at one commit get a numbered local/REMOTE picker, with `n` for further pages.
+- Confirm every action with `y`; any other key cancels. Safe local deletion uses
+  `git branch -d`. If unmerged, show Git's error; `D` plus a new confirmation is
+  the explicit force step (`git branch -D`).
+- Remote deletion removes the server branch, with a separate confirmation and
+  a lease protecting against a changed server tip. There is no remote force mode.
+- Remote deletion never prompts for credentials or SSH passphrases; it relies on
+  an agent or credential helper and otherwise fails with Git's error.
+- Delete local and remote separately to remove both; neither implicitly deletes
+  the other. Refresh after each successful deletion.
+- Refuse current and worktree-held branches even with force. Re-read worktrees
+  before deleting; remote deletion also protects active locals tracking it.
+- Refuse branch tips changed since refresh. Never switch, stash or discard.
+- Delta/Hunk review shortcuts moved to `v` / `V` to free `d` / `D`.
+- Safeguards are recorded in [FRICTION.md](FRICTION.md).
 
 ### Worktree picker — Proposed
 

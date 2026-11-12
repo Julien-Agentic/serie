@@ -251,6 +251,8 @@ fn build_lines(
         (vec![UserEvent::Confirm], "Show commit details".into()),
         (vec![UserEvent::RefList], "Open refs list".into()),
         (vec![UserEvent::SwitchBranch], "Switch to branch at commit".into()),
+        (vec![UserEvent::DeleteBranch], "Delete branch (confirm)".into()),
+        (vec![UserEvent::ForceDeleteBranch], "Force-delete local branch (confirm)".into()),
         (vec![UserEvent::GraphNarrower], "Narrow the graph column".into()),
         (vec![UserEvent::GraphWider], "Widen the graph column".into()),
         (vec![UserEvent::Search], "Start search".into()),
@@ -287,6 +289,8 @@ fn build_lines(
         (vec![UserEvent::ShortCopy], "Copy commit short hash".into()),
         (vec![UserEvent::FullCopy], "Copy commit hash".into()),
         (vec![UserEvent::CopyBranchName], "Copy branch name".into()),
+        (vec![UserEvent::DeleteBranch], "Delete branch (confirm)".into()),
+        (vec![UserEvent::ForceDeleteBranch], "Force-delete local branch (confirm)".into()),
     ];
     detail_helps.extend(user_command_help_items.clone());
     let (detail_key_lines, detail_value_lines) = build_block_lines("Commit Detail:", detail_helps, color_theme, keybind);
@@ -300,6 +304,8 @@ fn build_lines(
         (vec![UserEvent::NavigateRight], "Open node".into()),
         (vec![UserEvent::NavigateLeft], "Close node".into()),
         (vec![UserEvent::SwitchBranch], "Switch to branch".into()),
+        (vec![UserEvent::DeleteBranch], "Delete branch (confirm)".into()),
+        (vec![UserEvent::ForceDeleteBranch], "Force-delete local branch (confirm)".into()),
         (vec![UserEvent::Refresh], "Refresh".into()),
         (vec![UserEvent::ShortCopy, UserEvent::CopyBranchName], "Copy ref name".into()),
     ];

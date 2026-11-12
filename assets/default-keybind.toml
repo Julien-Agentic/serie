@@ -42,7 +42,11 @@ switch_branch = ["space"]
 graph_narrower = ["<"]
 graph_wider = [">"]
 
-user_command_1 = ["d"]
+# deletion always asks for confirmation; force deletion is local-only
+delete_branch = ["d"]
+force_delete_branch = ["shift-d"]
+
+user_command_1 = ["v"]
 
 # copy the short commit hash with c, or a branch name with C
 short_copy = ["c"]

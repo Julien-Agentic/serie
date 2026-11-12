@@ -23,8 +23,8 @@ Example configuration in `config.toml`:
 
 ```toml
 [keybind]
-user_command_1 = ["d"]
-user_command_2 = ["shift-d"]
+user_command_1 = ["v"]
+user_command_2 = ["shift-v"]
 user_command_3 = ["b"]
 user_command_4 = ["a"]
 
@@ -39,14 +39,18 @@ commands_3 = { "name" = "delete branch", type = "silent", commands = ["git", "br
 commands_4 = { "name" = "amend commit", type = "suspend", commands = ["git", "commit", "--amend"], refresh = true }
 ```
 
+The fork reserves `d` / `D` for confirmed branch deletion. Use `v` / `V` for
+review commands instead. External deletion commands such as `commands_3` above
+bypass the built-in deletion confirmations and worktree checks.
+
 ## Marked commits
 
 Press `m` to mark a commit and use `{{marked_hash}}` to refer to it in user commands.
-For example, mark a commit, select another commit, then press `D` to view the diff:
+For example, mark a commit, select another commit, then press `V` to view the diff:
 
 ```toml
 [keybind]
-user_command_2 = ["shift-d"]
+user_command_2 = ["shift-v"]
 
 [core.user_command]
 commands_2 = { name = "diff from mark", commands = ["git", "--no-pager", "diff", "--color=always", "{{marked_hash}}", "{{target_hash}}"] }

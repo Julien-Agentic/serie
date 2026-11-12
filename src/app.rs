@@ -24,7 +24,10 @@ use crate::{
     external::{
         copy_to_clipboard, exec_user_command, exec_user_command_suspend, ExternalCommandParameters,
     },
-    git::{BranchTarget, BranchesAtCommit, Commit, CommitHash, FileChange, Head, Ref, Repository},
+    git::{
+        BranchTarget, BranchesAtCommit, Commit, CommitHash, DeleteBranchError, FileChange, Head,
+        Ref, Repository,
+    },
     graph::{GraphImageManager, GraphWidth},
     keybind::KeyBind,
     protocol::ImageProtocol,
@@ -73,6 +76,9 @@ pub struct RefreshRequest {
     pub graph_width: Option<GraphWidth>,
 }
 
+const REMOTE_FORCE_UNSUPPORTED: &str =
+    "Remote force deletion is not supported; use d for a separately confirmed remote deletion";
+
 // A question on the status line; the next key press answers it.
 #[derive(Debug)]
 enum PendingPrompt {
@@ -82,6 +88,15 @@ enum PendingPrompt {
     ChooseBranch(Vec<BranchTarget>),
     // 1-9: which branch name to copy, without changing repository state
     ChooseBranchNameToCopy(Vec<String>),
+    ChooseBranchToDelete {
+        targets: Vec<BranchTarget>,
+        force: bool,
+        offset: usize,
+    },
+    ConfirmDelete {
+        target: BranchTarget,
+        force: bool,
+    },
 }
 
 #[derive(Debug)]
@@ -334,6 +349,12 @@ impl App<'_> {
                 }
                 AppEvent::SwitchBranchAtSelectedCommit => {
                     self.switch_branch_at_selected_commit();
+                }
+                AppEvent::DeleteBranch { target, force } => {
+                    self.request_delete_branch(target, force);
+                }
+                AppEvent::DeleteBranchAtCommit { hash, force } => {
+                    self.delete_branch_at_commit(&hash, force);
                 }
                 AppEvent::CopyBranchName(hash) => {
                     self.copy_branch_name(&hash);
@@ -985,9 +1006,123 @@ impl App<'_> {
         }
     }
 
+    fn choose_branch_to_delete(&mut self, targets: Vec<BranchTarget>, force: bool, offset: usize) {
+        let choices: Vec<String> = targets
+            .iter()
+            .skip(offset)
+            .take(9)
+            .enumerate()
+            .map(|(i, target)| {
+                let kind = match target {
+                    BranchTarget::Local(_) => "local",
+                    BranchTarget::Remote(_) => "REMOTE",
+                };
+                format!("[{}] {kind} {}", i + 1, target.name())
+            })
+            .collect();
+        let more = if targets.len() > 9 {
+            "  [n] next page"
+        } else {
+            ""
+        };
+        self.info_notification(format!("Delete which branch? {}{more}", choices.join("  ")));
+        self.app_status.pending_prompt = Some(PendingPrompt::ChooseBranchToDelete {
+            targets,
+            force,
+            offset,
+        });
+    }
+
+    fn delete_branch_at_commit(&mut self, hash: &CommitHash, force: bool) {
+        let mut targets = self.repository.branches_for_deletion(hash);
+        if targets.is_empty() {
+            self.info_notification("No branch at this commit; nothing deleted".into());
+            return;
+        }
+        // Force deletion is local-only, so remote choices would only be refused.
+        if force {
+            targets.retain(|target| matches!(target, BranchTarget::Local(_)));
+            if targets.is_empty() {
+                self.warn_notification(REMOTE_FORCE_UNSUPPORTED.into());
+                return;
+            }
+        }
+        match targets.len() {
+            1 => self.request_delete_branch(targets.remove(0), force),
+            _ => self.choose_branch_to_delete(targets, force, 0),
+        }
+    }
+
+    fn request_delete_branch(&mut self, target: BranchTarget, force: bool) {
+        if force && matches!(target, BranchTarget::Remote(_)) {
+            self.warn_notification(REMOTE_FORCE_UNSUPPORTED.into());
+            return;
+        }
+        if let Err(error) = self.repository.check_branch_deletion(&target) {
+            self.error_notification(error);
+            return;
+        }
+        let question = match &target {
+            BranchTarget::Local(name) if force => format!("FORCE DELETE local branch '{name}', even if unmerged? [y/N]"),
+            BranchTarget::Local(name) => format!("Delete local branch '{name}'? Remote branch is unchanged. [y/N]"),
+            BranchTarget::Remote(name) => format!("Delete REMOTE branch '{name}' FROM THE SERVER? Local branches are unchanged. [y/N]"),
+        };
+        self.warn_notification(question);
+        self.app_status.pending_prompt = Some(PendingPrompt::ConfirmDelete { target, force });
+    }
+
+    fn delete_branch(&mut self, target: BranchTarget, force: bool) {
+        match self.repository.delete_branch(&target, force) {
+            Ok(()) => {
+                self.app_status.pending_refresh_message = Some(format!(
+                    "Deleted {} branch '{}'",
+                    match target {
+                        BranchTarget::Local(_) => "local",
+                        BranchTarget::Remote(_) => "remote",
+                    },
+                    target.name()
+                ));
+                self.view.refresh();
+            }
+            Err(DeleteBranchError::NotMerged(error)) => {
+                self.warn_notification(format!(
+                    "{error} — use force-delete (D by default) for a separate confirmation"
+                ));
+            }
+            Err(DeleteBranchError::Other(error)) => self.error_notification(error),
+        }
+    }
+
     // Any key other than the expected answer cancels the prompt.
     fn answer_prompt(&mut self, pending: PendingPrompt, key: KeyEvent) {
         match (pending, key.code) {
+            (PendingPrompt::ConfirmDelete { target, force }, KeyCode::Char('y' | 'Y')) => {
+                self.delete_branch(target, force);
+            }
+            (
+                PendingPrompt::ChooseBranchToDelete {
+                    mut targets,
+                    force,
+                    offset,
+                },
+                KeyCode::Char(c),
+            ) => {
+                if c == 'n' && targets.len() > 9 {
+                    let next = if offset + 9 < targets.len() {
+                        offset + 9
+                    } else {
+                        0
+                    };
+                    self.choose_branch_to_delete(targets, force, next);
+                } else if let Some(index) = c
+                    .to_digit(10)
+                    .filter(|d| (1..=9).contains(d))
+                    .map(|d| offset + d as usize - 1)
+                    .filter(|i| *i < targets.len())
+                {
+                    self.request_delete_branch(targets.swap_remove(index), force);
+                }
+            }
             (PendingPrompt::ConfirmSwitch(target), KeyCode::Char('y' | 'Y')) => {
                 self.switch_branch(target);
             }
@@ -1202,6 +1337,194 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
+    use crate::{
+        config::GraphColorConfig,
+        git::SortCommit,
+        graph::{calc_graph, CellWidthType, GraphImageWidthMode, GraphStyle},
+        test_support::git::GitRepository,
+    };
+
+    fn with_deletion_app(f: impl FnOnce(&mut App<'_>)) {
+        with_deletion_app_setup(|_| {}, f);
+    }
+
+    fn with_deletion_app_setup(setup: impl FnOnce(&std::path::Path), f: impl FnOnce(&mut App<'_>)) {
+        let dir = tempfile::tempdir().unwrap();
+        let git = GitRepository::new(dir.path());
+        git.init();
+        git.commit("initial", "2026-01-01");
+        git.checkout_b("topic");
+        git.commit("unmerged", "2026-01-02");
+        git.checkout("master");
+        setup(dir.path());
+        let repository =
+            Repository::load(dir.path(), SortCommit::Chronological, None, false).unwrap();
+        let graph = calc_graph(&repository, None);
+        let colors = GraphColorSet::new(&GraphColorConfig::default());
+        let images = GraphImageManager::new(
+            &graph,
+            &colors,
+            CellWidthType::Double,
+            GraphStyle::Rounded,
+            false,
+            GraphImageWidthMode::Compact,
+            ImageProtocol::Iterm2,
+        );
+        let ctx = Rc::new(AppContext {
+            keybind: KeyBind::new(None),
+            core_config: CoreConfig::default(),
+            ui_config: UiConfig::default(),
+            color_theme: ColorTheme::default(),
+            image_protocol: ImageProtocol::Iterm2,
+        });
+        let ec = EventController::without_input();
+        let mut app = App::new(
+            &repository,
+            images,
+            &colors,
+            InitialSelection::Latest,
+            ctx,
+            &ec,
+        );
+        f(&mut app);
+    }
+
+    #[test]
+    fn test_delete_requires_confirmation_and_cancel_keeps_branch() {
+        with_deletion_app(|app| {
+            let target = BranchTarget::Local("topic".into());
+            app.request_delete_branch(target.clone(), false);
+            let pending = app.app_status.pending_prompt.take().unwrap();
+            assert!(matches!(
+                pending,
+                PendingPrompt::ConfirmDelete { force: false, .. }
+            ));
+            app.answer_prompt(pending, KeyEvent::from(KeyCode::Esc));
+            assert!(app.app_status.pending_prompt.is_none());
+            assert!(app.repository.check_branch_deletion(&target).is_ok());
+
+            app.request_delete_branch(target.clone(), false);
+            let pending = app.app_status.pending_prompt.take().unwrap();
+            app.answer_prompt(pending, KeyEvent::from(KeyCode::Char('y')));
+            assert!(
+                matches!(&app.app_status.status_line, StatusLine::NotificationWarn(text) if text.contains("not fully merged"))
+            );
+            assert!(app.app_status.pending_prompt.is_none());
+            assert!(app.repository.check_branch_deletion(&target).is_ok());
+
+            // Force is a new explicit request, and still needs its own confirmation.
+            app.request_delete_branch(target.clone(), true);
+            let pending = app.app_status.pending_prompt.take().unwrap();
+            app.answer_prompt(pending, KeyEvent::from(KeyCode::Char('n')));
+            assert!(app.repository.check_branch_deletion(&target).is_ok());
+            app.request_delete_branch(target.clone(), true);
+            let pending = app.app_status.pending_prompt.take().unwrap();
+            app.answer_prompt(pending, KeyEvent::from(KeyCode::Char('y')));
+            assert!(app.repository.check_branch_deletion(&target).is_err());
+            assert!(app
+                .app_status
+                .pending_refresh_message
+                .as_ref()
+                .unwrap()
+                .contains("Deleted local"));
+        });
+    }
+
+    #[test]
+    fn test_delete_picker_pages_and_requires_confirmation_after_selection() {
+        with_deletion_app(|app| {
+            let mut targets: Vec<_> = (0..9)
+                .map(|i| BranchTarget::Local(format!("missing-{i}")))
+                .collect();
+            targets.push(BranchTarget::Local("topic".into()));
+            app.choose_branch_to_delete(targets, false, 0);
+            let pending = app.app_status.pending_prompt.take().unwrap();
+            app.answer_prompt(pending, KeyEvent::from(KeyCode::Char('n')));
+            assert!(matches!(
+                app.app_status.pending_prompt,
+                Some(PendingPrompt::ChooseBranchToDelete { offset: 9, .. })
+            ));
+            let pending = app.app_status.pending_prompt.take().unwrap();
+            app.answer_prompt(pending, KeyEvent::from(KeyCode::Char('1')));
+            assert!(
+                matches!(&app.app_status.pending_prompt, Some(PendingPrompt::ConfirmDelete { target: BranchTarget::Local(name), force: false }) if name == "topic")
+            );
+            assert!(app
+                .repository
+                .check_branch_deletion(&BranchTarget::Local("topic".into()))
+                .is_ok());
+        });
+    }
+
+    fn git_stdout(path: &std::path::Path, args: &[&str]) -> String {
+        let output = std::process::Command::new("git")
+            .args(["-c", "user.name=Test", "-c", "user.email=test@example.com"])
+            .args(args)
+            .current_dir(path)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        String::from_utf8(output.stdout).unwrap().trim().to_string()
+    }
+
+    fn ref_target(app: &App<'_>, name: &str) -> CommitHash {
+        app.repository
+            .all_refs()
+            .into_iter()
+            .find(|r| r.name() == name)
+            .unwrap()
+            .target()
+            .clone()
+    }
+
+    #[test]
+    fn test_force_delete_at_commit_offers_only_local_branches() {
+        let setup = |path: &std::path::Path| {
+            let topic = git_stdout(path, &["rev-parse", "topic"]);
+            git_stdout(path, &["update-ref", "refs/remotes/origin/topic", &topic]);
+            let tree = git_stdout(path, &["rev-parse", "master^{tree}"]);
+            let gone = git_stdout(path, &["commit-tree", &tree, "-p", "master", "-m", "gone"]);
+            git_stdout(path, &["update-ref", "refs/remotes/origin/gone", &gone]);
+        };
+        with_deletion_app_setup(setup, |app| {
+            // Safe deletion offers both; force skips straight to the local branch.
+            let topic = ref_target(app, "topic");
+            app.delete_branch_at_commit(&topic, false);
+            assert!(matches!(
+                &app.app_status.pending_prompt,
+                Some(PendingPrompt::ChooseBranchToDelete { targets, .. }) if targets.len() == 2
+            ));
+            app.app_status.pending_prompt = None;
+            app.delete_branch_at_commit(&topic, true);
+            assert!(
+                matches!(&app.app_status.pending_prompt, Some(PendingPrompt::ConfirmDelete { target: BranchTarget::Local(name), force: true }) if name == "topic")
+            );
+
+            app.app_status.pending_prompt = None;
+            let gone = ref_target(app, "origin/gone");
+            app.delete_branch_at_commit(&gone, true);
+            assert!(app.app_status.pending_prompt.is_none());
+            assert!(
+                matches!(&app.app_status.status_line, StatusLine::NotificationWarn(text) if text.contains("not supported"))
+            );
+        });
+    }
+
+    #[test]
+    fn test_delete_current_branch_and_remote_force_never_prompt() {
+        with_deletion_app(|app| {
+            app.request_delete_branch(BranchTarget::Local("master".into()), true);
+            assert!(app.app_status.pending_prompt.is_none());
+            assert!(
+                matches!(&app.app_status.status_line, StatusLine::NotificationError(text) if text.contains("checked out"))
+            );
+            app.request_delete_branch(BranchTarget::Remote("origin/topic".into()), true);
+            assert!(app.app_status.pending_prompt.is_none());
+            assert!(
+                matches!(&app.app_status.status_line, StatusLine::NotificationWarn(text) if text.contains("not supported"))
+            );
+        });
+    }
 
     #[rstest]
     #[case(1)]
