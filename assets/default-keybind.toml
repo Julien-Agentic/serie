@@ -9,6 +9,8 @@ navigate_down = ["j", "down"]
 navigate_right = ["l", "right"]
 navigate_left = ["h", "left"]
 go_to_parent = ["alt-j", "alt-down"]
+go_to_next_branch = ["}"]
+go_to_previous_branch = ["{"]
 select_up = ["shift-k"]
 select_down = ["shift-j"]
 
@@ -42,6 +44,8 @@ graph_wider = [">"]
 
 user_command_1 = ["d"]
 
-# copy part of information, ex: copy the short commit hash not all
+# copy the short commit hash with c, or a branch name with C
 short_copy = ["c"]
-full_copy = ["shift-c"]
+copy_branch_name = ["shift-c"]
+# full SHA copying remains available for a custom binding
+full_copy = []

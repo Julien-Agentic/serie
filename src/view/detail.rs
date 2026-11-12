@@ -107,6 +107,9 @@ impl<'a> DetailView<'a> {
             UserEvent::FullCopy => {
                 self.copy_commit_hash();
             }
+            UserEvent::CopyBranchName => {
+                self.tx.send(AppEvent::CopyBranchName(self.commit.commit_hash.clone()));
+            }
             UserEvent::UserCommand(n) => {
                 self.tx.send(AppEvent::OpenUserCommand(n));
             }

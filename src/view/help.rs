@@ -235,6 +235,8 @@ fn build_lines(
         (vec![UserEvent::NavigateDown, UserEvent::SelectDown], "Move down".into()),
         (vec![UserEvent::NavigateUp, UserEvent::SelectUp], "Move up".into()),
         (vec![UserEvent::GoToParent], "Go to parent".into()),
+        (vec![UserEvent::GoToNextBranch], "Go to next branch tip".into()),
+        (vec![UserEvent::GoToPreviousBranch], "Go to previous branch tip".into()),
         (vec![UserEvent::GoToTop], "Go to top".into()),
         (vec![UserEvent::GoToBottom], "Go to bottom".into()),
         (vec![UserEvent::PageDown], "Scroll page down".into()),
@@ -262,6 +264,7 @@ fn build_lines(
         (vec![UserEvent::Refresh], "Refresh".into()),
         (vec![UserEvent::ShortCopy], "Copy commit short hash".into()),
         (vec![UserEvent::FullCopy], "Copy commit hash".into()),
+        (vec![UserEvent::CopyBranchName], "Copy branch name".into()),
     ];
     list_helps.extend(user_command_help_items.clone());
     let (list_key_lines, list_value_lines) = build_block_lines("Commit List:", list_helps, color_theme, keybind);
@@ -283,6 +286,7 @@ fn build_lines(
         (vec![UserEvent::Refresh], "Refresh".into()),
         (vec![UserEvent::ShortCopy], "Copy commit short hash".into()),
         (vec![UserEvent::FullCopy], "Copy commit hash".into()),
+        (vec![UserEvent::CopyBranchName], "Copy branch name".into()),
     ];
     detail_helps.extend(user_command_help_items.clone());
     let (detail_key_lines, detail_value_lines) = build_block_lines("Commit Detail:", detail_helps, color_theme, keybind);
@@ -297,7 +301,7 @@ fn build_lines(
         (vec![UserEvent::NavigateLeft], "Close node".into()),
         (vec![UserEvent::SwitchBranch], "Switch to branch".into()),
         (vec![UserEvent::Refresh], "Refresh".into()),
-        (vec![UserEvent::ShortCopy], "Copy ref name".into()),
+        (vec![UserEvent::ShortCopy, UserEvent::CopyBranchName], "Copy ref name".into()),
     ];
     let (refs_key_lines, refs_value_lines) = build_block_lines("Refs List:", refs_helps, color_theme, keybind);
     

@@ -87,7 +87,7 @@ impl<'a> RefsView<'a> {
                 self.ref_list_state.close_node();
                 self.update_commit_list_selected();
             }
-            UserEvent::ShortCopy | UserEvent::FullCopy => {
+            UserEvent::ShortCopy | UserEvent::FullCopy | UserEvent::CopyBranchName => {
                 self.copy_ref_name();
             }
             UserEvent::HelpToggle => {

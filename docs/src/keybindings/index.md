@@ -28,6 +28,7 @@ The default key bindings can be overridden.
 | <kbd>Enter</kbd>                     | Show commit details<br>Apply search (if searching) | `confirm`                                    |
 | <kbd>Tab</kbd>                       | Open refs list                                     | `ref_list`                                   |
 | <kbd>Space</kbd>                     | Switch to the branch at the selected commit        | `switch_branch`                              |
+| <kbd>{/}</kbd>                       | Go to previous/next branch tip                     | `go_to_previous_branch` `go_to_next_branch`  |
 | <kbd>&lt;/&gt;</kbd>                 | Narrow/widen the graph column                      | `graph_narrower` `graph_wider`               |
 | <kbd>/</kbd>                         | Start search                                       | `search`                                     |
 | <kbd>Esc</kbd>                       | Cancel search                                      | `cancel`                                     |
@@ -37,7 +38,8 @@ The default key bindings can be overridden.
 | <kbd>Ctrl-x</kbd>                    | Toggle fuzzy match                                 | `fuzzy_toggle`                               |
 | <kbd>m</kbd>                         | Toggle commit mark                                 | `mark_toggle`                                |
 | <kbd>R</kbd>                         | Refresh                                            | `refresh`                                    |
-| <kbd>c/C</kbd>                       | Copy commit short/full hash                        | `short_copy` `full_copy`                     |
+| <kbd>c</kbd>                         | Copy commit short hash                             | `short_copy`                                |
+| <kbd>C</kbd>                         | Copy branch name                                   | `copy_branch_name`                          |
 | <kbd>d</kbd>                         | Toggle custom user command view                    | `user_command_1`                             |
 
 #### Commit Detail
@@ -53,7 +55,8 @@ The default key bindings can be overridden.
 | <kbd>Alt-Down</kbd> <kbd>Alt-j</kbd> | Select parent commit            | `go_to_parent`                  |
 | <kbd>m</kbd>                         | Toggle commit mark              | `mark_toggle`                   |
 | <kbd>R</kbd>                         | Refresh                         | `refresh`                       |
-| <kbd>c/C</kbd>                       | Copy commit short/full hash     | `short_copy` `full_copy`        |
+| <kbd>c</kbd>                         | Copy commit short hash          | `short_copy`                   |
+| <kbd>C</kbd>                         | Copy branch name                | `copy_branch_name`             |
 | <kbd>d</kbd>                         | Toggle custom user command view | `user_command_1`                |
 
 #### Refs List
@@ -67,7 +70,7 @@ The default key bindings can be overridden.
 | <kbd>Right/Left</kbd> <kbd>l/h</kbd>               | Open/Close node  | `navigate_right` `navigate_left` |
 | <kbd>Space</kbd>                                   | Switch to the selected branch | `switch_branch`     |
 | <kbd>R</kbd>                                       | Refresh          | `refresh`                        |
-| <kbd>c</kbd>                                       | Copy ref name    | `short_copy`                     |
+| <kbd>c/C</kbd>                                     | Copy ref name    | `short_copy` `copy_branch_name`  |
 
 The current branch is marked with `*` and a branch checked out in another
 worktree with `+`, as in `git branch`. Switching never forces, stashes or
@@ -81,6 +84,23 @@ without a local branch is offered too and creates a tracking local branch.
 A commit with no branch is left alone: Serie never detaches HEAD. In the
 commit detail, user command and help views, <kbd>Space</kbd> scrolls a page
 down as before.
+
+In the commit list and detail view, <kbd>C</kbd> copies a local branch name
+at the selected commit, including the current branch. If several local branches
+point there, choose one with a digit (up to nine choices); another key cancels.
+If there are no local branches, remote-tracking names such as `origin/topic`
+are offered instead, excluding `origin/HEAD`. With no branch, nothing is copied.
+<kbd>c</kbd> still copies the short SHA. Full SHA copying remains available
+through the `full_copy` action, which has no default binding. In the refs panel,
+<kbd>c</kbd> and <kbd>C</kbd> both copy the selected branch or tag name.
+
+In the commit list, <kbd>{</kbd> jumps upward to the previous branch tip and
+<kbd>}</kbd> downward to the next, in the displayed history order. Local and
+remote branches count; tags and stashes do not. Several branches at one commit
+are one stop. The current commit is skipped, and navigation stops at either
+end without wrapping. Counts work, for example <kbd>3}</kbd>. These keys only
+move selection; use <kbd>Space</kbd> to switch branches. While typing a search,
+braces are ordinary text.
 
 <kbd>&lt;</kbd> narrows the graph column by hiding one lane from the right,
 until one is left; the lanes that stay keep their size. <kbd>&gt;</kbd> shows

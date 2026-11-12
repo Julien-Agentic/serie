@@ -259,6 +259,12 @@ impl Repository {
         branches_at_commit(&self.refs(commit_hash), &local_branches, current)
     }
 
+    /// Prefer local branch names for copying; fall back to remote-tracking names.
+    /// Unlike switching, copying includes the current branch and occupied branches.
+    pub fn branch_names_for_copy(&self, commit_hash: &CommitHash) -> Vec<String> {
+        branch_names_for_copy(&self.refs(commit_hash))
+    }
+
     pub fn commit_detail(&self, commit_hash: &CommitHash) -> (Commit, Vec<FileChange>) {
         let commit = self.commit(commit_hash).unwrap().clone();
         let changes = if commit.parent_commit_hashes.is_empty() {
@@ -268,6 +274,29 @@ impl Repository {
         };
         (commit, changes)
     }
+}
+
+fn branch_names_for_copy(refs: &[&Ref]) -> Vec<String> {
+    let locals: Vec<String> = refs
+        .iter()
+        .filter_map(|r| match r {
+            Ref::Branch { name, .. } => Some(name.clone()),
+            _ => None,
+        })
+        .collect();
+    let mut names = if locals.is_empty() {
+        refs.iter()
+            .filter_map(|r| match r {
+                Ref::RemoteBranch { name, .. } if !name.ends_with("/HEAD") => Some(name.clone()),
+                _ => None,
+            })
+            .collect()
+    } else {
+        locals
+    };
+    names.sort_unstable();
+    names.dedup();
+    names
 }
 
 /// A branch the user asked to switch to.
@@ -1207,6 +1236,33 @@ detached
 
     fn local(name: &str) -> BranchTarget {
         BranchTarget::Local(name.into())
+    }
+
+    #[test]
+    fn test_branch_names_for_copy_prefers_locals_and_includes_current() {
+        let refs = [branch("topic"), remote_branch("origin/main"), branch("main")];
+        let refs: Vec<&Ref> = refs.iter().collect();
+        assert_eq!(branch_names_for_copy(&refs), vec!["main", "topic"]);
+    }
+
+    #[test]
+    fn test_branch_names_for_copy_falls_back_to_remote_names() {
+        let refs = [remote_branch("origin/topic"), remote_branch("origin/HEAD"), remote_branch("upstream/main")];
+        let refs: Vec<&Ref> = refs.iter().collect();
+        assert_eq!(branch_names_for_copy(&refs), vec!["origin/topic", "upstream/main"]);
+    }
+
+    #[test]
+    fn test_branch_names_for_copy_ignores_tags_stashes_and_remote_head() {
+        let target = CommitHash::from("unused");
+        let refs = [
+            Ref::Tag { name: "v1".into(), target: target.clone() },
+            Ref::Stash { name: "stash@{0}".into(), message: "saved".into(), target },
+            remote_branch("origin/HEAD"),
+        ];
+        let refs: Vec<&Ref> = refs.iter().collect();
+        assert!(branch_names_for_copy(&refs).is_empty());
+        assert!(branch_names_for_copy(&[]).is_empty());
     }
 
     #[test]

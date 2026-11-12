@@ -250,6 +250,43 @@ mod tests {
 
     #[rustfmt::skip]
     #[test]
+    fn test_default_branch_navigation_keybindings() {
+        let keybind = KeyBind::new(None);
+        for (key, event) in [
+            ('{', UserEvent::GoToPreviousBranch),
+            ('}', UserEvent::GoToNextBranch),
+        ] {
+            assert_eq!(keybind.get(&KeyEvent::from(KeyCode::Char(key))), Some(&event));
+            assert!(event.is_countable());
+        }
+        let custom: KeyBind = toml::from_str("go_to_next_branch = ['alt-n']").unwrap();
+        let keybind = KeyBind::new(Some(custom));
+        assert_eq!(
+            keybind.get(&KeyEvent::new(KeyCode::Char('n'), KeyModifiers::ALT)),
+            Some(&UserEvent::GoToNextBranch),
+        );
+    }
+
+    #[test]
+    fn test_default_copy_keybindings() {
+        let keybind = KeyBind::new(None);
+        assert_eq!(
+            keybind.get(&KeyEvent::from(KeyCode::Char('c'))),
+            Some(&UserEvent::ShortCopy),
+        );
+        assert_eq!(
+            keybind.get(&KeyEvent::new(KeyCode::Char('c'), KeyModifiers::SHIFT)),
+            Some(&UserEvent::CopyBranchName),
+        );
+        assert!(keybind.keys_for_event(UserEvent::FullCopy).is_empty());
+        let custom = toml::from_str("full_copy = ['alt-c']").unwrap();
+        assert_eq!(
+            KeyBind::new(Some(custom)).get(&KeyEvent::new(KeyCode::Char('c'), KeyModifiers::ALT)),
+            Some(&UserEvent::FullCopy),
+        );
+    }
+
+    #[test]
     fn test_deserialize_keybind() {
         let toml = r#"
             navigate_up = ["k"]

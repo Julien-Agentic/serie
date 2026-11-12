@@ -310,6 +310,43 @@ impl<'a> CommitListState<'a> {
         }
     }
 
+    /// Jump between branch tips in display order, without wrapping or checking out.
+    pub fn select_branch_tip(&mut self, forward: bool, count: usize) {
+        if self.total == 0 || count == 0 {
+            return;
+        }
+        let current = self.current_selected_index();
+        let mut target = current;
+        let mut remaining = count;
+        for step in 1..self.total {
+            let index = if forward {
+                let index = current + step;
+                if index >= self.total {
+                    break;
+                }
+                index
+            } else if let Some(index) = current.checked_sub(step) {
+                index
+            } else {
+                break;
+            };
+            if self.commits[index]
+                .refs
+                .iter()
+                .any(|r| matches!(r, Ref::Branch { .. } | Ref::RemoteBranch { .. }))
+            {
+                target = index;
+                remaining -= 1;
+                if remaining == 0 {
+                    break;
+                }
+            }
+        }
+        if target != current {
+            self.select_visible_index(target);
+        }
+    }
+
     pub fn select_parent(&mut self) {
         if let Some(target_commit) = self.selected_commit_parent_hash().cloned() {
             if self.commit_hash_set.contains(&target_commit) {
@@ -1263,6 +1300,15 @@ mod tests {
         image_protocol: ImageProtocol,
         f: impl FnOnce(&mut CommitListState<'_>) -> R,
     ) -> R {
+        with_commit_list_state_and_refs(subjects, image_protocol, &[], f)
+    }
+
+    fn with_commit_list_state_and_refs<R>(
+        subjects: &[&str],
+        image_protocol: ImageProtocol,
+        refs: &[(usize, Ref)],
+        f: impl FnOnce(&mut CommitListState<'_>) -> R,
+    ) -> R {
         let commits: Vec<Commit> = subjects
             .iter()
             .enumerate()
@@ -1272,6 +1318,13 @@ mod tests {
                 ..Commit::default()
             })
             .collect();
+        let mut ref_map = FxHashMap::<CommitHash, Vec<Ref>>::default();
+        for (index, reference) in refs {
+            ref_map
+                .entry(commits[*index].commit_hash.clone())
+                .or_default()
+                .push(reference.clone());
+        }
         let commit_hashes = commits.iter().map(|c| c.commit_hash.clone()).collect();
         let commit_map = commits
             .into_iter()
@@ -1282,7 +1335,7 @@ mod tests {
             commit_map,
             FxHashMap::default(),
             FxHashMap::default(),
-            FxHashMap::default(),
+            ref_map,
             Head::None,
             commit_hashes,
         );
@@ -1315,6 +1368,78 @@ mod tests {
         );
         state.reset_height(subjects.len());
         f(&mut state)
+    }
+
+    #[test]
+    fn test_branch_tip_navigation() {
+        let target = CommitHash::from("unused");
+        let refs = vec![
+            (0, Ref::Branch {
+                name: "main".into(),
+                target: target.clone(),
+            }),
+            (1, Ref::Tag {
+                name: "v1".into(),
+                target: target.clone(),
+            }),
+            (2, Ref::Branch {
+                name: "topic".into(),
+                target: target.clone(),
+            }),
+            (2, Ref::RemoteBranch {
+                name: "origin/topic".into(),
+                target: target.clone(),
+            }),
+            (3, Ref::Stash {
+                name: "stash@{0}".into(),
+                message: "saved".into(),
+                target: target.clone(),
+            }),
+            (5, Ref::RemoteBranch {
+                name: "origin/other".into(),
+                target,
+            }),
+        ];
+        with_commit_list_state_and_refs(
+            &["a", "b", "c", "d", "e", "f", "g"],
+            ImageProtocol::Iterm2,
+            &refs,
+            |state| {
+                state.reset_height(2);
+                state.select_branch_tip(false, 1);
+                assert_eq!(state.current_selected_index(), 0);
+                state.select_branch_tip(true, 1);
+                assert_eq!(state.current_selected_index(), 2);
+                state.select_branch_tip(true, 1);
+                assert_eq!(state.current_selected_index(), 5);
+                assert!(state.offset > 0);
+                assert!(state.selected < state.height);
+                state.select_branch_tip(true, 1);
+                assert_eq!(state.current_selected_index(), 5);
+                state.select_branch_tip(false, 2);
+                assert_eq!(state.current_selected_index(), 0);
+                state.select_branch_tip(true, 2);
+                assert_eq!(state.current_selected_index(), 5);
+                state.select_branch_tip(false, usize::MAX);
+                assert_eq!(state.current_selected_index(), 0);
+                state.select_branch_tip(true, usize::MAX);
+                assert_eq!(state.current_selected_index(), 5);
+                state.select_last();
+                state.select_branch_tip(false, 1);
+                assert_eq!(state.current_selected_index(), 5);
+            },
+        );
+    }
+
+    #[test]
+    fn test_branch_tip_navigation_without_branches_leaves_selection_unchanged() {
+        with_commit_list_state(&["a", "b", "c"], |state| {
+            state.select_next();
+            state.select_branch_tip(true, 1);
+            assert_eq!(state.current_selected_index(), 1);
+            state.select_branch_tip(false, 1);
+            assert_eq!(state.current_selected_index(), 1);
+        });
     }
 
     fn input_search_query(state: &mut CommitListState<'_>, query: &str) {

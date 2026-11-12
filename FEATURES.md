@@ -123,10 +123,26 @@ Safety, wherever the switch starts:
 **Not done:** offering to open the other worktree instead. That needs the
 worktree picker.
 
-### Copy branch name — Existing
+### Copy branch name — Implemented
 
-- Stock Serie already copies the selected branch or tag name with `c` in the
-  refs list (`Tab`). This was listed as proposed by mistake.
+- `C` copies a branch name at the selected commit in the commit list and detail
+  view; `c` still copies the short SHA.
+- Prefer local branches, including the current branch. With multiple locals,
+  choose with a digit (up to nine); any other key cancels.
+- Without a local branch, offer remote-tracking names, excluding remote HEAD
+  aliases. With no branch, show a message and leave the clipboard unchanged.
+- In the refs list (`Tab`), both `c` and `C` copy the selected branch or tag name.
+- Full SHA copying remains available as the unbound `full_copy` action for custom
+  keybindings.
+
+### Keybind to jump to previous/next branch — Implemented
+
+- `{` jumps upward to the previous branch tip; `}` jumps downward to the next.
+- Follow displayed history order, including local and remote branches but not
+  tags or stashes. Several branches on one commit are one stop.
+- Skip the current commit and stop at either end without wrapping.
+- Support counts, such as `3}`. Only selection changes; `Space` still switches
+  branches. Braces remain ordinary text while typing a search.
 
 ### Branch creation — Proposed
 

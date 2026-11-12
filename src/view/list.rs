@@ -77,6 +77,10 @@ impl<'a> ListView<'a> {
                         self.as_mut_list_state().select_prev();
                     }
                 }
+                UserEvent::GoToNextBranch | UserEvent::GoToPreviousBranch => {
+                    self.as_mut_list_state()
+                        .select_branch_tip(event == UserEvent::GoToNextBranch, count);
+                }
                 UserEvent::GoToParent => {
                     for _ in 0..count {
                         self.as_mut_list_state().select_parent();
@@ -132,6 +136,11 @@ impl<'a> ListView<'a> {
                 }
                 UserEvent::FullCopy => {
                     self.copy_commit_hash();
+                }
+                UserEvent::CopyBranchName => {
+                    self.tx.send(AppEvent::CopyBranchName(
+                        self.as_list_state().selected_commit_hash().clone(),
+                    ));
                 }
                 UserEvent::Search => {
                     self.as_mut_list_state().start_search();

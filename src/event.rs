@@ -13,7 +13,10 @@ use serde::{
     Deserialize,
 };
 
-use crate::{git::BranchTarget, view::RefreshViewContext};
+use crate::{
+    git::{BranchTarget, CommitHash},
+    view::RefreshViewContext,
+};
 
 #[derive(Debug)]
 pub enum AppEvent {
@@ -33,6 +36,7 @@ pub enum AppEvent {
     SelectParentCommit,
     SwitchBranch(BranchTarget),
     SwitchBranchAtSelectedCommit,
+    CopyBranchName(CommitHash),
     ResizeGraph {
         wider: bool,
         steps: usize,
@@ -220,6 +224,8 @@ pub enum UserEvent {
     GoToTop,
     GoToBottom,
     GoToParent,
+    GoToNextBranch,
+    GoToPreviousBranch,
     ScrollUp,
     ScrollDown,
     PageUp,
@@ -245,6 +251,7 @@ pub enum UserEvent {
     GraphWider,
     ShortCopy,
     FullCopy,
+    CopyBranchName,
     Unknown,
 }
 
@@ -289,6 +296,8 @@ impl<'de> Deserialize<'de> for UserEvent {
                         "go_to_top" => Ok(UserEvent::GoToTop),
                         "go_to_bottom" => Ok(UserEvent::GoToBottom),
                         "go_to_parent" => Ok(UserEvent::GoToParent),
+                        "go_to_next_branch" => Ok(UserEvent::GoToNextBranch),
+                        "go_to_previous_branch" => Ok(UserEvent::GoToPreviousBranch),
                         "scroll_up" => Ok(UserEvent::ScrollUp),
                         "scroll_down" => Ok(UserEvent::ScrollDown),
                         "page_up" => Ok(UserEvent::PageUp),
@@ -313,6 +322,7 @@ impl<'de> Deserialize<'de> for UserEvent {
                         "graph_wider" => Ok(UserEvent::GraphWider),
                         "short_copy" => Ok(UserEvent::ShortCopy),
                         "full_copy" => Ok(UserEvent::FullCopy),
+                        "copy_branch_name" => Ok(UserEvent::CopyBranchName),
                         _ => {
                             let msg = format!("Unknown user event: {value}");
                             Err(de::Error::custom(msg))
@@ -349,6 +359,8 @@ impl UserEvent {
                 | UserEvent::ScrollUp
                 | UserEvent::ScrollDown
                 | UserEvent::GoToParent
+                | UserEvent::GoToNextBranch
+                | UserEvent::GoToPreviousBranch
                 | UserEvent::PageUp
                 | UserEvent::PageDown
                 | UserEvent::HalfPageUp

@@ -80,6 +80,8 @@ enum PendingPrompt {
     ConfirmSwitch(BranchTarget),
     // 1-9: which of the branches at the selected commit to switch to
     ChooseBranch(Vec<BranchTarget>),
+    // 1-9: which branch name to copy, without changing repository state
+    ChooseBranchNameToCopy(Vec<String>),
 }
 
 #[derive(Debug)]
@@ -332,6 +334,9 @@ impl App<'_> {
                 }
                 AppEvent::SwitchBranchAtSelectedCommit => {
                     self.switch_branch_at_selected_commit();
+                }
+                AppEvent::CopyBranchName(hash) => {
+                    self.copy_branch_name(&hash);
                 }
                 AppEvent::ResizeGraph { wider, steps } => {
                     self.resize_graph(wider, steps);
@@ -962,11 +967,33 @@ impl App<'_> {
         }
     }
 
+    fn copy_branch_name(&mut self, hash: &CommitHash) {
+        let mut names = self.repository.branch_names_for_copy(hash);
+        match names.len() {
+            0 => self.info_notification("No branch at this commit; nothing copied".into()),
+            1 => self.copy_to_clipboard("Branch Name".into(), names.remove(0)),
+            _ => {
+                names.truncate(9);
+                let choices: Vec<String> = names.iter().enumerate()
+                    .map(|(i, name)| format!("[{}] {name}", i + 1))
+                    .collect();
+                self.info_notification(format!("Copy branch name: {}", choices.join("  ")));
+                self.app_status.pending_prompt = Some(PendingPrompt::ChooseBranchNameToCopy(names));
+            }
+        }
+    }
+
     // Any key other than the expected answer cancels the prompt.
     fn answer_prompt(&mut self, pending: PendingPrompt, key: KeyEvent) {
         match (pending, key.code) {
             (PendingPrompt::ConfirmSwitch(target), KeyCode::Char('y' | 'Y')) => {
                 self.switch_branch(target);
+            }
+            (PendingPrompt::ChooseBranchNameToCopy(mut names), KeyCode::Char(c)) => {
+                let index = c.to_digit(10).and_then(|d| (d as usize).checked_sub(1));
+                if let Some(index) = index.filter(|i| *i < names.len()) {
+                    self.copy_to_clipboard("Branch Name".into(), names.swap_remove(index));
+                }
             }
             (PendingPrompt::ChooseBranch(mut targets), KeyCode::Char(c)) => {
                 let index = c.to_digit(10).and_then(|d| (d as usize).checked_sub(1));

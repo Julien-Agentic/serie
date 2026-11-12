@@ -660,6 +660,12 @@
         "go_to_parent": {
           "$ref": "#/definitions/keybindArray"
         },
+        "go_to_next_branch": {
+          "$ref": "#/definitions/keybindArray"
+        },
+        "go_to_previous_branch": {
+          "$ref": "#/definitions/keybindArray"
+        },
         "go_to_top": {
           "$ref": "#/definitions/keybindArray"
         },
@@ -727,6 +733,9 @@
           "$ref": "#/definitions/keybindArray"
         },
         "full_copy": {
+          "$ref": "#/definitions/keybindArray"
+        },
+        "copy_branch_name": {
           "$ref": "#/definitions/keybindArray"
         }
       },
