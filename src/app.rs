@@ -88,6 +88,11 @@ const REMOTE_FORCE_UNSUPPORTED: &str =
 enum PendingPrompt {
     // y/N: switch although the worktree has uncommitted changes
     ConfirmSwitch(BranchTarget),
+    // Open the checkout already holding this branch; never run git switch there.
+    ConfirmOpenWorktree {
+        branch: String,
+        path: std::path::PathBuf,
+    },
     // 1-9: which of the branches at the selected commit to switch to
     ChooseBranch(Vec<BranchTarget>),
     // 1-9: which branch name to copy, without changing repository state
@@ -334,8 +339,17 @@ impl App<'_> {
                 AppEvent::OpenWorktrees => self.open_worktrees(),
                 AppEvent::CloseWorktrees => self.close_worktrees(),
                 AppEvent::OpenWorktree(path) => {
-                    if let View::Worktrees(view) = &self.view {
-                        let context = view.refresh_context();
+                    let context = match &self.view {
+                        View::Worktrees(view) => Some(view.refresh_context()),
+                        View::Refs(view) => Some(view.refresh_context()),
+                        View::List(view) => Some(RefreshViewContext::List {
+                            list_context: crate::view::ListRefreshViewContext::from(
+                                view.as_list_state(),
+                            ),
+                        }),
+                        _ => None,
+                    };
+                    if let Some(context) = context {
                         self.cleanup_graph_images()?;
                         return Ok(Ret::OpenWorktree { path, context });
                     }
@@ -951,12 +965,7 @@ impl App<'_> {
                 self.info_notification(format!("Already on '{name}'"));
                 return;
             }
-            // Never take a branch away from the worktree, and possibly the agent, using it.
-            if let Some(path) = self.repository.other_worktree_branches().get(name) {
-                self.error_notification(format!(
-                    "'{name}' is checked out in worktree {}; not switching",
-                    path.display()
-                ));
+            if self.offer_branch_worktree(name) {
                 return;
             }
         }
@@ -970,6 +979,41 @@ impl App<'_> {
             }
             Ok(false) => self.switch_branch(target),
             Err(err) => self.error_notification(err),
+        }
+    }
+
+    // Returns true if the branch is held elsewhere, or lookup failed. In both
+    // cases a checkout here must not proceed. Always use fresh worktree data.
+    fn offer_branch_worktree(&mut self, branch: &str) -> bool {
+        match self.repository.other_worktree_for_branch(branch) {
+            Ok(Some(path)) => {
+                self.warn_notification(format!(
+                    "'{branch}' is checked out elsewhere. Open that worktree instead? [y/N] {}",
+                    path.display()
+                ));
+                self.app_status.pending_prompt = Some(PendingPrompt::ConfirmOpenWorktree {
+                    branch: branch.into(),
+                    path,
+                });
+                true
+            }
+            Ok(None) => false,
+            Err(error) => {
+                self.error_notification(error);
+                true
+            }
+        }
+    }
+
+    fn confirm_open_branch_worktree(&mut self, branch: &str, path: std::path::PathBuf) {
+        match self.repository.other_worktree_for_branch(branch) {
+            Ok(Some(current_path)) if current_path == path => {
+                self.ec.send(AppEvent::OpenWorktree(path));
+            }
+            Ok(_) => self.warn_notification(format!(
+                "Worktree for '{branch}' changed; not opening. Select the branch again or refresh"
+            )),
+            Err(error) => self.error_notification(error),
         }
     }
 
@@ -1179,6 +1223,9 @@ impl App<'_> {
                     self.request_delete_branch(targets.swap_remove(index), force);
                 }
             }
+            (PendingPrompt::ConfirmOpenWorktree { branch, path }, KeyCode::Char('y' | 'Y')) => {
+                self.confirm_open_branch_worktree(&branch, path);
+            }
             (PendingPrompt::ConfirmSwitch(target), KeyCode::Char('y' | 'Y')) => {
                 self.switch_branch(target);
             }
@@ -1199,6 +1246,13 @@ impl App<'_> {
     }
 
     fn switch_branch(&mut self, target: BranchTarget) {
+        // A branch may have acquired a worktree while the dirty-checkout prompt
+        // was waiting for an answer. Offer opening it rather than attempting checkout.
+        if let BranchTarget::Local(name) = &target {
+            if self.offer_branch_worktree(name) {
+                return;
+            }
+        }
         match self.repository.switch_branch(&target) {
             Ok(()) => {
                 let message = match &target {
@@ -1443,6 +1497,108 @@ mod tests {
             &ec,
         );
         f(&mut app);
+    }
+
+    #[test]
+    fn test_branch_switch_offers_worktree_from_list_and_refs_without_checkout() {
+        let other = tempfile::tempdir().unwrap();
+        let path = other.path().join("agent worktree");
+        with_deletion_app_setup(
+            |root| {
+                git_stdout(root, &["worktree", "add", path.to_str().unwrap(), "topic"]);
+                std::fs::write(root.join("dirty"), "keep current changes").unwrap();
+                git_stdout(root, &["add", "dirty"]);
+                std::fs::write(path.join("agent-file"), "keep agent changes").unwrap();
+            },
+            |app| {
+                for refs in [false, true] {
+                    if refs {
+                        app.open_refs();
+                    }
+                    app.request_switch_branch(BranchTarget::Local("topic".into()));
+                    let pending = app.app_status.pending_prompt.take().unwrap();
+                    assert!(
+                        matches!(&pending, PendingPrompt::ConfirmOpenWorktree { branch, path: selected }
+                        if branch == "topic" && *selected == std::fs::canonicalize(&path).unwrap())
+                    );
+                    assert!(
+                        matches!(&app.app_status.status_line, StatusLine::NotificationWarn(text)
+                        if text.contains("Open that worktree instead? [y/N]"))
+                    );
+                    // Declining never falls back to checkout, even with dirty files here.
+                    app.answer_prompt(pending, KeyEvent::from(KeyCode::Char('n')));
+                    assert!(app.app_status.pending_prompt.is_none());
+                    app.request_switch_branch(BranchTarget::Local("topic".into()));
+                    let pending = app.app_status.pending_prompt.take().unwrap();
+                    app.answer_prompt(pending, KeyEvent::from(KeyCode::Char('Y')));
+                    assert!(matches!(app.ec.recv(), AppEvent::OpenWorktree(selected)
+                        if selected == std::fs::canonicalize(&path).unwrap()));
+                    assert_eq!(
+                        git_stdout(
+                            &app.repository.worktree_root().unwrap(),
+                            &["branch", "--show-current"]
+                        ),
+                        "master"
+                    );
+                    assert_eq!(git_stdout(&path, &["branch", "--show-current"]), "topic");
+                    assert_eq!(
+                        std::fs::read_to_string(path.join("agent-file")).unwrap(),
+                        "keep agent changes"
+                    );
+                    assert!(app.app_status.pending_refresh_message.is_none());
+                }
+            },
+        );
+    }
+
+    #[test]
+    fn test_branch_switch_finds_new_worktree_and_rejects_stale_confirmation() {
+        let other = tempfile::tempdir().unwrap();
+        let path = other.path().join("agent");
+        with_deletion_app(|app| {
+            let root = app.repository.worktree_root().unwrap();
+            // Added after Repository::load: the cached branch markers don't know about it.
+            git_stdout(&root, &["worktree", "add", path.to_str().unwrap(), "topic"]);
+            app.request_switch_branch(BranchTarget::Local("topic".into()));
+            let pending = app.app_status.pending_prompt.take().unwrap();
+            assert!(matches!(
+                &pending,
+                PendingPrompt::ConfirmOpenWorktree { .. }
+            ));
+            git_stdout(&path, &["switch", "--detach"]);
+            app.answer_prompt(pending, KeyEvent::from(KeyCode::Char('y')));
+            assert!(
+                matches!(&app.app_status.status_line, StatusLine::NotificationWarn(text)
+                if text.contains("changed; not opening"))
+            );
+            assert_eq!(git_stdout(&root, &["branch", "--show-current"]), "master");
+            assert!(app.app_status.pending_refresh_message.is_none());
+        });
+    }
+
+    #[test]
+    fn test_branch_acquiring_worktree_during_dirty_confirmation_offers_open_instead() {
+        let other = tempfile::tempdir().unwrap();
+        let path = other.path().join("agent");
+        with_deletion_app(|app| {
+            let root = app.repository.worktree_root().unwrap();
+            std::fs::write(root.join("dirty"), "keep changes").unwrap();
+            git_stdout(&root, &["add", "dirty"]);
+            app.request_switch_branch(BranchTarget::Local("topic".into()));
+            let pending = app.app_status.pending_prompt.take().unwrap();
+            assert!(matches!(&pending, PendingPrompt::ConfirmSwitch(_)));
+            git_stdout(&root, &["worktree", "add", path.to_str().unwrap(), "topic"]);
+            app.answer_prompt(pending, KeyEvent::from(KeyCode::Char('y')));
+            assert!(matches!(
+                app.app_status.pending_prompt,
+                Some(PendingPrompt::ConfirmOpenWorktree { .. })
+            ));
+            assert_eq!(git_stdout(&root, &["branch", "--show-current"]), "master");
+            assert_eq!(
+                std::fs::read_to_string(root.join("dirty")).unwrap(),
+                "keep changes"
+            );
+        });
     }
 
     #[test]

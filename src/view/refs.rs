@@ -196,7 +196,7 @@ impl<'a> RefsView<'a> {
         self.tx.send(AppEvent::CopyToClipboard { name, value });
     }
 
-    pub fn refresh(&self) {
+    pub fn refresh_context(&self) -> RefreshViewContext {
         let list_state = self.as_list_state();
         let list_context = ListRefreshViewContext::from(list_state);
         let (tree_selected, tree_opened) = self.ref_list_state.current_tree_status();
@@ -204,11 +204,14 @@ impl<'a> RefsView<'a> {
             selected: tree_selected,
             opened: tree_opened,
         };
-        let context = RefreshViewContext::Refs {
+        RefreshViewContext::Refs {
             list_context,
             refs_context,
-        };
-        self.tx.send(AppEvent::Refresh(context));
+        }
+    }
+
+    pub fn refresh(&self) {
+        self.tx.send(AppEvent::Refresh(self.refresh_context()));
     }
 
     pub fn reset_refs_with(&mut self, refs_context: RefsRefreshViewContext) {

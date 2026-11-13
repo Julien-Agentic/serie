@@ -79,8 +79,14 @@ The default key bindings can be overridden.
 
 The current branch is marked with `*` and a branch checked out in another
 worktree with `+`, as in `git branch`. Switching never forces, stashes or
-discards: a branch held by another worktree is refused, uncommitted changes
-ask for confirmation first, and anything git refuses is shown as an error.
+discards: a branch held by another worktree offers to open that worktree instead
+with a `y/N` confirmation. This works from the commit list and refs panel.
+Declining leaves the current context unchanged; accepting selects the other
+worktree's HEAD without checking out any branch or touching either checkout's
+files. Worktree ownership is re-read before offering and accepting; if it changes
+while the prompt is open, the action is cancelled. A failed open preserves the
+original view. For ordinary checkouts here, uncommitted changes still ask for
+confirmation first, and anything git refuses is shown as an error.
 
 In the commit list, <kbd>Space</kbd> switches to the branch whose head is the
 selected commit. If several branches point at that commit, the status line

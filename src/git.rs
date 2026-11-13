@@ -187,6 +187,22 @@ impl Repository {
             .map(|output| parse_worktrees(&output))
     }
 
+    /// Fresh lookup: an agent may have added a worktree since the graph was loaded.
+    pub fn other_worktree_for_branch(
+        &self,
+        name: &str,
+    ) -> std::result::Result<Option<PathBuf>, String> {
+        let current = self.worktree_root()?;
+        let current = std::fs::canonicalize(&current).unwrap_or(current);
+        Ok(self.worktrees()?.into_iter().find_map(|worktree| {
+            if worktree.bare || worktree.branch.as_deref() != Some(name) {
+                return None;
+            }
+            let path = std::fs::canonicalize(&worktree.path).unwrap_or(worktree.path);
+            (path != current).then_some(path)
+        }))
+    }
+
     pub fn worktree_root(&self) -> std::result::Result<PathBuf, String> {
         run_git(&self.path, &["rev-parse", "--show-toplevel"])
             .map(|output| PathBuf::from(output.strip_suffix('\n').unwrap_or(&output)))
@@ -728,9 +744,8 @@ fn is_inside_work_tree(path: &Path) -> bool {
         .arg("rev-parse")
         .arg("--is-inside-work-tree")
         .current_dir(path)
-        .output()
-        .unwrap();
-    output.status.success() && output.stdout == b"true\n"
+        .output();
+    output.is_ok_and(|output| output.status.success() && output.stdout == b"true\n")
 }
 
 fn is_bare_repository(path: &Path) -> bool {
@@ -738,9 +753,8 @@ fn is_bare_repository(path: &Path) -> bool {
         .arg("rev-parse")
         .arg("--is-bare-repository")
         .current_dir(path)
-        .output()
-        .unwrap();
-    output.status.success() && output.stdout == b"true\n"
+        .output();
+    output.is_ok_and(|output| output.status.success() && output.stdout == b"true\n")
 }
 
 fn load_all_commits(
@@ -1280,6 +1294,14 @@ detached
     }
 
     #[test]
+    fn test_load_missing_worktree_returns_error_instead_of_panicking() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("removed-worktree");
+        assert!(Repository::load(&missing, SortCommit::Chronological, None, false).is_err());
+        assert!(Repository::load(dir.path(), SortCommit::Chronological, None, false).is_err());
+    }
+
+    #[test]
     fn test_parse_worktrees_nul_paths_and_bare_repository() {
         let trees = parse_worktrees("worktree /bare\0bare\0\0worktree /agent\nwith\ttabs\0HEAD abc\0branch refs/heads/topic\0locked agent running\0\0worktree /detached\0detached\0prunable missing\0\0");
         assert_eq!(trees.len(), 3);
@@ -1314,6 +1336,23 @@ detached
         assert!(trees.iter().any(|w| w.branch.as_deref() == Some("agent")));
         let agent = Repository::load(&path, SortCommit::Chronological, None, false).unwrap();
         assert!(matches!(agent.head(), Head::Branch { name } if name == "agent"));
+        assert_eq!(
+            repository.other_worktree_for_branch("master").unwrap(),
+            None
+        );
+        assert_eq!(
+            repository.other_worktree_for_branch("missing").unwrap(),
+            None
+        );
+        assert_eq!(
+            repository.other_worktree_for_branch("agent").unwrap(),
+            Some(fs::canonicalize(&path).unwrap())
+        );
+        assert_eq!(agent.other_worktree_for_branch("agent").unwrap(), None);
+        assert_eq!(
+            agent.other_worktree_for_branch("master").unwrap(),
+            Some(fs::canonicalize(dir.path()).unwrap())
+        );
         assert_eq!(
             fs::canonicalize(agent.worktree_root().unwrap()).unwrap(),
             fs::canonicalize(&path).unwrap()

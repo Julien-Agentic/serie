@@ -116,12 +116,18 @@ In the refs list (`Tab`), which is stock Serie's side panel:
 
 Safety, wherever the switch starts:
 
-- A branch checked out in another worktree is refused, with that worktree's path.
+- For a branch checked out in another worktree, show its path and ask whether to
+  open that worktree instead (`y/N`). Declining never falls back to checkout.
+- Re-read worktrees before offering and accepting the prompt, including when a
+  branch acquires a worktree during dirty-checkout confirmation. If the branch's
+  worktree changes before acceptance, cancel and ask the user to select again.
 - Uncommitted changes to tracked files ask for a y/N confirmation first.
 - Nothing is forced, stashed or discarded; git's own refusal is shown as-is.
 
-**Not done:** offering to open the other worktree instead. That needs the
-worktree picker.
+Opening an existing worktree uses the same context-switching path as the picker:
+select its HEAD, run diffs and commands there, and never change either worktree's
+branch or working files. Failed opens retain the originating commit list or refs
+panel.
 
 ### Copy branch name — Implemented
 
@@ -229,6 +235,8 @@ launch.
 - Never force a checkout, automatically stash, or discard changes.
 - Surface Git errors clearly instead of silently working around them.
 - Prefer opening an existing worktree over changing its checked-out branch.
+  **Implemented:** branch switching offers the existing worktree with explicit
+  confirmation, rather than attempting checkout.
 - Avoid switching branches underneath an agent working in that checkout.
 
 ## Considered, but not scoped

@@ -51,8 +51,9 @@ One feature at a time, in this order:
    the branch work and can move earlier if it hurts more in daily use.
 
 This replaces the earlier suggestion in FEATURES.md to prototype the worktree
-picker first. Branch switching still has to be worktree-aware: a branch checked
-out in another worktree must be flagged, never force-checked-out.
+picker first. Branch switching is now worktree-aware: a branch checked out in
+another worktree offers to open that checkout with `y/N`, never force-checks it
+out here. Worktree ownership is re-read before offering and accepting.
 
 ## Deletion safeguards
 
