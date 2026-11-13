@@ -56,6 +56,9 @@ impl<'a> RefsView<'a> {
             UserEvent::Cancel | UserEvent::Close | UserEvent::RefList => {
                 self.tx.send(AppEvent::CloseRefs);
             }
+            UserEvent::WorktreeList => {
+                self.tx.send(AppEvent::OpenWorktrees);
+            }
             UserEvent::DeleteBranch | UserEvent::ForceDeleteBranch => {
                 if let Some(target) = self.selected_branch_target() {
                     self.tx.send(AppEvent::DeleteBranch {

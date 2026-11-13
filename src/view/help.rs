@@ -250,6 +250,7 @@ fn build_lines(
         (vec![UserEvent::SelectBottom], "Select bottom of the screen".into()),
         (vec![UserEvent::Confirm], "Show commit details".into()),
         (vec![UserEvent::RefList], "Open refs list".into()),
+        (vec![UserEvent::WorktreeList], "Open worktree picker".into()),
         (vec![UserEvent::SwitchBranch], "Switch to branch at commit".into()),
         (vec![UserEvent::DeleteBranch], "Delete branch (confirm)".into()),
         (vec![UserEvent::ForceDeleteBranch], "Force-delete local branch (confirm)".into()),
@@ -296,6 +297,7 @@ fn build_lines(
     let (detail_key_lines, detail_value_lines) = build_block_lines("Commit Detail:", detail_helps, color_theme, keybind);
 
     let refs_helps = vec![
+        (vec![UserEvent::WorktreeList], "Open worktree picker".into()),
         (vec![UserEvent::Cancel, UserEvent::Close, UserEvent::RefList], "Close refs list".into()),
         (vec![UserEvent::NavigateDown, UserEvent::SelectDown], "Move down".into()),
         (vec![UserEvent::NavigateUp, UserEvent::SelectUp], "Move up".into()),
@@ -311,6 +313,19 @@ fn build_lines(
     ];
     let (refs_key_lines, refs_value_lines) = build_block_lines("Refs List:", refs_helps, color_theme, keybind);
     
+    let worktree_helps = vec![
+        (vec![UserEvent::Cancel, UserEvent::Close, UserEvent::WorktreeList], "Close worktree picker".into()),
+        (vec![UserEvent::RefList], "Open refs list".into()),
+        (vec![UserEvent::NavigateDown, UserEvent::SelectDown], "Move down".into()),
+        (vec![UserEvent::NavigateUp, UserEvent::SelectUp], "Move up".into()),
+        (vec![UserEvent::GoToTop], "Go to top".into()),
+        (vec![UserEvent::GoToBottom], "Go to bottom".into()),
+        (vec![UserEvent::Confirm, UserEvent::SwitchBranch], "Open worktree (no checkout)".into()),
+        (vec![UserEvent::ShortCopy, UserEvent::CopyBranchName], "Copy worktree path".into()),
+        (vec![UserEvent::Refresh], "Refresh worktrees".into()),
+    ];
+    let (worktree_key_lines, worktree_value_lines) = build_block_lines("Worktrees:", worktree_helps, color_theme, keybind);
+
     let mut user_command_helps = vec![
         (vec![UserEvent::Cancel, UserEvent::Close], "Close user command".into()),
         (vec![UserEvent::NavigateDown], "Scroll down".into()),
@@ -337,6 +352,7 @@ fn build_lines(
         list_key_lines,
         detail_key_lines,
         refs_key_lines,
+        worktree_key_lines,
         user_command_key_lines,
     ]);
     let value_lines = join_line_groups_with_empty(vec![
@@ -345,6 +361,7 @@ fn build_lines(
         list_value_lines,
         detail_value_lines,
         refs_value_lines,
+        worktree_value_lines,
         user_command_value_lines,
     ]);
 

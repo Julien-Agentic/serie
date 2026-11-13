@@ -9,7 +9,7 @@ use crate::{
     search::SearchOptions,
     view::{
         detail::DetailView, help::HelpView, list::ListView, refs::RefsView,
-        user_command::UserCommandView,
+        user_command::UserCommandView, worktrees::WorktreesView,
     },
     widget::commit_list::{CommitListState, SearchRefreshContext},
 };
@@ -23,6 +23,7 @@ pub enum View<'a> {
     UserCommand(Box<UserCommandView<'a>>),
     Refs(Box<RefsView<'a>>),
     Help(Box<HelpView<'a>>),
+    Worktrees(Box<WorktreesView<'a>>),
 }
 
 impl<'a> View<'a> {
@@ -33,6 +34,7 @@ impl<'a> View<'a> {
             View::Detail(view) => view.handle_event(event_with_count, key_event),
             View::UserCommand(view) => view.handle_event(event_with_count, key_event),
             View::Refs(view) => view.handle_event(event_with_count, key_event),
+            View::Worktrees(view) => view.handle_event(event_with_count, key_event),
             View::Help(view) => view.handle_event(event_with_count, key_event),
         }
     }
@@ -44,6 +46,7 @@ impl<'a> View<'a> {
             View::Detail(view) => view.render(f, area),
             View::UserCommand(view) => view.render(f, area),
             View::Refs(view) => view.render(f, area),
+            View::Worktrees(view) => view.render(f, area),
             View::Help(view) => view.render(f, area),
         }
     }
@@ -55,6 +58,7 @@ impl<'a> View<'a> {
             View::Detail(view) => view.update_layout(area),
             View::UserCommand(view) => view.update_layout(area),
             View::Refs(view) => view.update_layout(area),
+            View::Worktrees(view) => view.update_layout(area),
             View::Help(_) => {}
         }
     }
@@ -66,6 +70,7 @@ impl<'a> View<'a> {
             View::Detail(view) => view.prepare_graph_uploads(),
             View::UserCommand(view) => view.prepare_graph_uploads(),
             View::Refs(view) => view.prepare_graph_uploads(),
+            View::Worktrees(view) => view.prepare_graph_uploads(),
             View::Help(_) => {}
         }
     }
@@ -77,6 +82,7 @@ impl<'a> View<'a> {
             View::Detail(view) => view.drain_pending_graph_uploads(),
             View::UserCommand(view) => view.drain_pending_graph_uploads(),
             View::Refs(view) => view.drain_pending_graph_uploads(),
+            View::Worktrees(view) => view.drain_pending_graph_uploads(),
             View::Help(_) => Vec::new(),
         }
     }
@@ -88,13 +94,14 @@ impl<'a> View<'a> {
             View::Detail(view) => view.graph_image_ids_sorted(),
             View::UserCommand(view) => view.graph_image_ids_sorted(),
             View::Refs(view) => view.graph_image_ids_sorted(),
+            View::Worktrees(view) => view.graph_image_ids_sorted(),
             View::Help(view) => view.graph_image_ids_sorted(),
         }
     }
 
     pub fn image_clear_area(&self, area: Rect) -> Option<Rect> {
         match self {
-            View::Default | View::List(_) | View::Refs(_) => None,
+            View::Default | View::List(_) | View::Refs(_) | View::Worktrees(_) => None,
             View::Detail(view) => Some(view.image_clear_area(area)),
             View::UserCommand(view) => Some(view.image_clear_area(area)),
             View::Help(_) => Some(area),
@@ -161,6 +168,22 @@ impl<'a> View<'a> {
         )))
     }
 
+    pub fn of_worktrees(
+        commit_list_state: CommitListState<'a>,
+        worktrees: Vec<crate::git::Worktree>,
+        current_path: std::path::PathBuf,
+        ctx: Rc<AppContext>,
+        tx: Sender,
+    ) -> Self {
+        View::Worktrees(Box::new(WorktreesView::new(
+            commit_list_state,
+            worktrees,
+            current_path,
+            ctx,
+            tx,
+        )))
+    }
+
     pub fn of_help(before: View<'a>, ctx: Rc<AppContext>, tx: Sender) -> Self {
         View::Help(Box::new(HelpView::new(before, ctx, tx)))
     }
@@ -172,6 +195,7 @@ impl<'a> View<'a> {
             View::Detail(view) => view.refresh(),
             View::UserCommand(view) => view.refresh(),
             View::Refs(view) => view.refresh(),
+            View::Worktrees(view) => view.refresh(),
             View::Help(_) => {}
         }
     }
@@ -179,6 +203,10 @@ impl<'a> View<'a> {
 
 #[derive(Debug, Clone)]
 pub enum RefreshViewContext {
+    Worktrees {
+        list_context: ListRefreshViewContext,
+        selected_path: Option<std::path::PathBuf>,
+    },
     List {
         list_context: ListRefreshViewContext,
     },
@@ -201,7 +229,8 @@ impl RefreshViewContext {
             RefreshViewContext::List { list_context }
             | RefreshViewContext::Detail { list_context }
             | RefreshViewContext::UserCommand { list_context, .. }
-            | RefreshViewContext::Refs { list_context, .. } => list_context,
+            | RefreshViewContext::Refs { list_context, .. }
+            | RefreshViewContext::Worktrees { list_context, .. } => list_context,
         }
     }
 }

@@ -174,6 +174,9 @@ impl<'a> ListView<'a> {
                 UserEvent::RefList => {
                     self.tx.send(AppEvent::OpenRefs);
                 }
+                UserEvent::WorktreeList => {
+                    self.tx.send(AppEvent::OpenWorktrees);
+                }
                 UserEvent::MarkToggle => {
                     self.as_mut_list_state().toggle_mark();
                 }

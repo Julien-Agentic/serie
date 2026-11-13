@@ -180,7 +180,7 @@ fn main() -> Result<()> {
     let graph_style = args.graph_style.or(core_config.option.graph_style).into();
     let graph_antialias = args.resolve_graph_antialias(core_config.option.graph_antialias);
     let graph_image_width_mode = graph_config.row_image_width;
-    let initial_selection = args
+    let mut initial_selection = args
         .initial_selection
         .or(core_config.option.initial_selection)
         .into();
@@ -206,9 +206,13 @@ fn main() -> Result<()> {
     // the number of graph lanes chosen in an earlier run
     let saved_graph_lanes = git::saved_graph_lanes(Path::new("."));
     let mut terminal = None;
+    let mut pending_repository = None;
 
     let ret: Result<()> = (|| loop {
-        let repository = git::Repository::load(Path::new("."), order, max_count, mailmap)?;
+        let repository = match pending_repository.take() {
+            Some(repository) => repository,
+            None => git::Repository::load(&std::env::current_dir()?, order, max_count, mailmap)?,
+        };
 
         let graph = graph::calc_graph(&repository, primary_branch.as_deref());
 
@@ -261,6 +265,30 @@ fn main() -> Result<()> {
             match app.run(terminal.as_mut().unwrap(), refresh_view_context)? {
                 Ret::Quit => {
                     return Ok(());
+                }
+                Ret::OpenWorktree { path, context } => {
+                    // Validate before changing cwd. On failure the old graph and panel survive.
+                    let result: Result<git::Repository> = (|| {
+                        let repository = git::Repository::load(&path, order, max_count, mailmap)?;
+                        let graph = graph::calc_graph(&repository, primary_branch.as_deref());
+                        check::fit_graph_width(&graph, graph_width)?;
+                        std::env::set_current_dir(&path)?;
+                        Ok(repository)
+                    })();
+                    match result {
+                        Ok(repository) => {
+                            pending_repository = Some(repository);
+                            refresh_view_context = None;
+                            initial_selection = app::InitialSelection::Head;
+                            refresh_message = Some(format!("Opened worktree {}", path.display()));
+                            break;
+                        }
+                        Err(error) => {
+                            refresh_view_context = Some(context);
+                            refresh_warning =
+                                Some(format!("Cannot open worktree {}: {error}", path.display()));
+                        }
+                    }
                 }
                 Ret::Refresh(request) => {
                     refresh_view_context = Some(request.context);

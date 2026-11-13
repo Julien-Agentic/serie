@@ -164,15 +164,23 @@ worktree picker.
 - Delta/Hunk review shortcuts moved to `v` / `V` to free `d` / `D`.
 - Safeguards are recorded in [FRICTION.md](FRICTION.md).
 
-### Worktree picker — Proposed
+### Worktree picker — Implemented
 
-- Show worktrees in a second right-hand side panel on its own key, `w`, next
-  to the refs list on `Tab`.
-- List existing worktrees with their branch and directory.
-- Select a worktree without leaving Serie.
-- Change Serie's repository context, not the branch checked out in that worktree.
-- Ensure repository reads, diffs, external commands, and editor actions all target
-  the selected worktree consistently.
+- `w` opens a right-hand worktree panel from the commit list or refs panel;
+  `Tab` switches back to refs. The panels share the configured refs width.
+- List existing non-bare worktrees with their branch (or detached HEAD) and
+  directory; `*` marks the current worktree, even when launched in a subdirectory.
+- Navigate with `j` / `k`, arrows, or `g` / `G`, including movement counts.
+  `Enter` or `Space` opens the selected worktree and selects its HEAD.
+- Change Serie's repository context and working directory, never the branch
+  checked out in either worktree. Dirty worktrees require no checkout or stash.
+- Repository reads, diffs, external commands, and editors launched by those
+  commands all target the selected worktree.
+- Validate the destination before switching; an unavailable worktree leaves the
+  original context intact and shows an error. Locked worktrees can be browsed.
+- `R` refreshes both history and worktrees, preserving panel selection by path.
+  `c` / `C` copies the selected directory. `w`, `Esc`, or `Backspace` closes
+  the picker without changing context.
 
 ### Selectable changed-file list inside Serie — Proposed
 

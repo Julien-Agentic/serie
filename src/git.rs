@@ -181,6 +181,17 @@ impl Repository {
         }
     }
 
+    /// Re-read the worktree list so newly created agent worktrees appear immediately.
+    pub fn worktrees(&self) -> std::result::Result<Vec<Worktree>, String> {
+        run_git(&self.path, &["worktree", "list", "--porcelain", "-z"])
+            .map(|output| parse_worktrees(&output))
+    }
+
+    pub fn worktree_root(&self) -> std::result::Result<PathBuf, String> {
+        run_git(&self.path, &["rev-parse", "--show-toplevel"])
+            .map(|output| PathBuf::from(output.strip_suffix('\n').unwrap_or(&output)))
+    }
+
     /// Local branches checked out in a worktree other than this one.
     pub fn other_worktree_branches(&self) -> &FxHashMap<String, PathBuf> {
         &self.other_worktree_branches
@@ -241,8 +252,10 @@ impl Repository {
                 }
             }
         }
-        let worktrees =
-            parse_worktrees(&run_git(&self.path, &["worktree", "list", "--porcelain"])?);
+        let worktrees = parse_worktrees(&run_git(
+            &self.path,
+            &["worktree", "list", "--porcelain", "-z"],
+        )?);
         for worktree in &worktrees {
             let Some(branch) = &worktree.branch else {
                 continue;
@@ -566,25 +579,33 @@ fn branches_at_commit(
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct Worktree {
-    path: PathBuf,
-    branch: Option<String>,
+pub struct Worktree {
+    pub path: PathBuf,
+    pub branch: Option<String>,
+    pub bare: bool,
 }
 
 fn load_worktrees(path: &Path) -> Vec<Worktree> {
-    run_git(path, &["worktree", "list", "--porcelain"])
+    run_git(path, &["worktree", "list", "--porcelain", "-z"])
         .map(|stdout| parse_worktrees(&stdout))
         .unwrap_or_default()
 }
 
 fn parse_worktrees(porcelain: &str) -> Vec<Worktree> {
     let mut worktrees: Vec<Worktree> = Vec::new();
-    for line in porcelain.lines() {
+    // -z avoids Git's quoting of paths containing tabs, newlines or backslashes.
+    let separator = if porcelain.contains('\0') { '\0' } else { '\n' };
+    for line in porcelain.split(separator) {
         if let Some(path) = line.strip_prefix("worktree ") {
             worktrees.push(Worktree {
                 path: PathBuf::from(path),
                 branch: None,
+                bare: false,
             });
+        } else if line == "bare" {
+            if let Some(worktree) = worktrees.last_mut() {
+                worktree.bare = true;
+            }
         } else if let Some(branch) = line.strip_prefix("branch refs/heads/") {
             if let Some(worktree) = worktrees.last_mut() {
                 worktree.branch = Some(branch.into());
@@ -1242,17 +1263,61 @@ detached
             Worktree {
                 path: "/repo".into(),
                 branch: Some("main".into()),
+                bare: false,
             },
             Worktree {
                 path: "/repo-wt/feature".into(),
                 branch: Some("feature/login".into()),
+                bare: false,
             },
             Worktree {
                 path: "/repo-wt/detached".into(),
                 branch: None,
+                bare: false,
             },
         ];
         assert_eq!(parse_worktrees(porcelain), expected);
+    }
+
+    #[test]
+    fn test_parse_worktrees_nul_paths_and_bare_repository() {
+        let trees = parse_worktrees("worktree /bare\0bare\0\0worktree /agent\nwith\ttabs\0HEAD abc\0branch refs/heads/topic\0locked agent running\0\0worktree /detached\0detached\0prunable missing\0\0");
+        assert_eq!(trees.len(), 3);
+        assert!(trees[0].bare);
+        assert_eq!(trees[1].path, PathBuf::from("/agent\nwith\ttabs"));
+        assert_eq!(trees[1].branch.as_deref(), Some("topic"));
+        assert_eq!(trees[2].branch, None);
+    }
+
+    #[test]
+    fn test_worktree_root_from_subdirectory_and_fresh_listing() {
+        let dir = tempfile::tempdir().unwrap();
+        let git = GitRepository::new(dir.path());
+        git.init();
+        git.commit("initial", "2026-01-01");
+        let subdir = dir.path().join("subdir");
+        fs::create_dir(&subdir).unwrap();
+        let repository = Repository::load(&subdir, SortCommit::Chronological, None, false).unwrap();
+        assert_eq!(
+            fs::canonicalize(repository.worktree_root().unwrap()).unwrap(),
+            fs::canonicalize(dir.path()).unwrap()
+        );
+        let other = tempfile::tempdir().unwrap();
+        let path = other.path().join("agent with spaces");
+        run_git(
+            dir.path(),
+            &["worktree", "add", "-b", "agent", path.to_str().unwrap()],
+        )
+        .unwrap();
+        let trees = repository.worktrees().unwrap();
+        assert_eq!(trees.len(), 2);
+        assert!(trees.iter().any(|w| w.branch.as_deref() == Some("agent")));
+        let agent = Repository::load(&path, SortCommit::Chronological, None, false).unwrap();
+        assert!(matches!(agent.head(), Head::Branch { name } if name == "agent"));
+        assert_eq!(
+            fs::canonicalize(agent.worktree_root().unwrap()).unwrap(),
+            fs::canonicalize(&path).unwrap()
+        );
     }
 
     #[test]

@@ -66,6 +66,10 @@ pub enum InitialSelection {
 pub enum Ret {
     Quit,
     Refresh(RefreshRequest),
+    OpenWorktree {
+        path: std::path::PathBuf,
+        context: RefreshViewContext,
+    },
 }
 
 pub struct RefreshRequest {
@@ -326,6 +330,15 @@ impl App<'_> {
                 }
                 AppEvent::CloseRefs => {
                     self.close_refs();
+                }
+                AppEvent::OpenWorktrees => self.open_worktrees(),
+                AppEvent::CloseWorktrees => self.close_worktrees(),
+                AppEvent::OpenWorktree(path) => {
+                    if let View::Worktrees(view) = &self.view {
+                        let context = view.refresh_context();
+                        self.cleanup_graph_images()?;
+                        return Ok(Ret::OpenWorktree { path, context });
+                    }
                 }
                 AppEvent::OpenHelp => {
                     self.open_help();
@@ -747,6 +760,7 @@ impl App<'_> {
     }
 
     fn open_refs(&mut self) {
+        self.close_worktrees();
         if let View::List(ref mut view) = self.view {
             let commit_list_state = view.take_list_state();
             let refs = self.repository.all_refs();
@@ -775,6 +789,42 @@ impl App<'_> {
         if let View::Refs(ref mut view) = self.view {
             let commit_list_state = view.take_list_state();
             self.view = View::of_list(commit_list_state, self.ctx.clone(), self.ec.sender());
+        }
+    }
+
+    fn open_worktrees(&mut self) {
+        // Read before taking the existing view's state: a failed read leaves it intact.
+        let worktrees = match self.repository.worktrees() {
+            Ok(worktrees) => worktrees,
+            Err(error) => {
+                self.error_notification(error);
+                return;
+            }
+        };
+        let current_path = match self.repository.worktree_root() {
+            Ok(path) => std::fs::canonicalize(&path).unwrap_or(path),
+            Err(error) => {
+                self.error_notification(error);
+                return;
+            }
+        };
+        self.close_refs();
+        if let View::List(view) = &mut self.view {
+            let state = view.take_list_state();
+            self.view = View::of_worktrees(
+                state,
+                worktrees,
+                current_path,
+                self.ctx.clone(),
+                self.ec.sender(),
+            );
+        }
+    }
+
+    fn close_worktrees(&mut self) {
+        if let View::Worktrees(view) = &mut self.view {
+            let state = view.take_list_state();
+            self.view = View::of_list(state, self.ctx.clone(), self.ec.sender());
         }
     }
 
@@ -831,6 +881,12 @@ impl App<'_> {
         }
         match context {
             RefreshViewContext::List { .. } => {}
+            RefreshViewContext::Worktrees { selected_path, .. } => {
+                self.open_worktrees();
+                if let (View::Worktrees(view), Some(path)) = (&mut self.view, selected_path) {
+                    view.select_path(&path);
+                }
+            }
             RefreshViewContext::Detail { .. } => {
                 self.open_detail();
             }
@@ -1387,6 +1443,74 @@ mod tests {
             &ec,
         );
         f(&mut app);
+    }
+
+    #[test]
+    fn test_worktree_panel_navigation_refresh_and_refs_transition() {
+        let other = tempfile::tempdir().unwrap();
+        let path = other.path().join("agent worktree");
+        with_deletion_app_setup(
+            |root| {
+                git_stdout(root, &["worktree", "add", path.to_str().unwrap(), "topic"]);
+            },
+            |app| {
+                app.open_worktrees();
+                let context = if let View::Worktrees(view) = &mut app.view {
+                    view.handle_event(
+                        UserEventWithCount::from_event(UserEvent::GoToBottom),
+                        KeyEvent::from(KeyCode::Char('G')),
+                    );
+                    view.refresh_context()
+                } else {
+                    panic!("worktree picker did not open")
+                };
+                assert!(
+                    matches!(&context, RefreshViewContext::Worktrees { selected_path: Some(selected), .. }
+                    if *selected == std::fs::canonicalize(&path).unwrap())
+                );
+
+                // Restore panel selection, including after an ordinary repository refresh.
+                app.close_worktrees();
+                app.init_with_context(context);
+                let mut terminal = Terminal::new(TestBackend::new(100, 12)).unwrap();
+                app.view.update_layout(Rect::new(0, 0, 100, 12));
+                app.view.prepare_graph_uploads();
+                terminal
+                    .draw(|frame| app.view.render(frame, frame.area()))
+                    .unwrap();
+                if let View::Worktrees(view) = &app.view {
+                    assert!(
+                        matches!(view.refresh_context(), RefreshViewContext::Worktrees { selected_path: Some(selected), .. }
+                        if selected == std::fs::canonicalize(&path).unwrap())
+                    );
+                } else {
+                    panic!("worktree picker was not restored")
+                }
+                // Switching side panels must retain a valid commit list state.
+                app.open_refs();
+                assert!(matches!(app.view, View::Refs(_)));
+                app.open_worktrees();
+                assert!(matches!(app.view, View::Worktrees(_)));
+                app.close_worktrees();
+                assert!(matches!(app.view, View::List(_)));
+                assert_eq!(git_stdout(&path, &["branch", "--show-current"]), "topic");
+            },
+        );
+    }
+
+    #[test]
+    fn test_worktree_panel_renders_in_narrow_and_empty_areas() {
+        with_deletion_app(|app| {
+            app.open_worktrees();
+            for (width, height) in [(1, 1), (8, 2), (80, 20)] {
+                let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+                app.view.update_layout(Rect::new(0, 0, width, height));
+                app.view.prepare_graph_uploads();
+                terminal
+                    .draw(|frame| app.view.render(frame, frame.area()))
+                    .unwrap();
+            }
+        });
     }
 
     #[test]

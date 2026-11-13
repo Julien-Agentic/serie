@@ -27,6 +27,7 @@ The default key bindings can be overridden.
 | <kbd>H/M/L</kbd>                     | Select top/middle/bottom of the screen             | `select_top` `select_middle` `select_bottom` |
 | <kbd>Enter</kbd>                     | Show commit details<br>Apply search (if searching) | `confirm`                                    |
 | <kbd>Tab</kbd>                       | Open refs list                                     | `ref_list`                                   |
+| <kbd>w</kbd>                         | Open worktree picker                               | `worktree_list`                              |
 | <kbd>Space</kbd>                     | Switch to the branch at the selected commit        | `switch_branch`                              |
 | <kbd>{/}</kbd>                       | Go to previous/next branch tip                     | `go_to_previous_branch` `go_to_next_branch`  |
 | <kbd>&lt;/&gt;</kbd>                 | Narrow/widen the graph column                      | `graph_narrower` `graph_wider`               |
@@ -74,6 +75,7 @@ The default key bindings can be overridden.
 | <kbd>d/D</kbd>                                     | Delete/force-delete selected branch (confirm first) | `delete_branch` `force_delete_branch` |
 | <kbd>R</kbd>                                       | Refresh          | `refresh`                        |
 | <kbd>c/C</kbd>                                     | Copy ref name    | `short_copy` `copy_branch_name`  |
+| <kbd>w</kbd>                                       | Open worktree picker | `worktree_list`               |
 
 The current branch is marked with `*` and a branch checked out in another
 worktree with `+`, as in `git branch`. Switching never forces, stashes or
@@ -87,6 +89,29 @@ without a local branch is offered too and creates a tracking local branch.
 A commit with no branch is left alone: Serie never detaches HEAD. In the
 commit detail, user command and help views, <kbd>Space</kbd> scrolls a page
 down as before.
+
+### Worktree picker
+
+Press <kbd>w</kbd> from the commit list or refs panel to list worktrees in a
+right-hand panel. Each entry shows its branch (or detached HEAD) and directory;
+`*` marks the current worktree. Bare repositories are not selectable.
+
+| Key | Description | Corresponding keybind |
+| --- | --- | --- |
+| <kbd>j/k</kbd> <kbd>Down/Up</kbd> <kbd>J/K</kbd> | Select worktree (supports counts) | `navigate_down` `navigate_up` `select_down` `select_up` |
+| <kbd>g/G</kbd> | First/last worktree | `go_to_top` `go_to_bottom` |
+| <kbd>Enter</kbd> <kbd>Space</kbd> | Open selected worktree | `confirm` `switch_branch` |
+| <kbd>w</kbd> <kbd>Esc</kbd> <kbd>Backspace</kbd> | Close picker | `worktree_list` `cancel` `close` |
+| <kbd>Tab</kbd> | Open refs instead | `ref_list` |
+| <kbd>R</kbd> | Refresh history and worktrees | `refresh` |
+| <kbd>c/C</kbd> | Copy selected directory | `short_copy` `copy_branch_name` |
+
+Opening a worktree changes Serie's context and working directory, then selects
+that worktree's HEAD. It never switches branches, stashes or discards changes.
+Diffs, user commands, and editors launched by those commands run in the selected
+worktree. If it cannot be opened, the original context remains active and a
+message explains why. Refreshing the picker retains its selection by path.
+The panel uses the `ui.refs.width` setting.
 
 ### Branch deletion
 

@@ -20,8 +20,9 @@ These block replacing VS Code's Git Graph.
 
 ## Nice to have
 
-- **Worktree picker.** No way to point Serie at another worktree without
-  relaunching. Wanted as a second right-hand side panel on `w`.
+- **Worktree picker.** *Fixed:* `w` opens a right-hand worktree panel;
+  `Enter` / `Space` changes Serie's context without checking out a branch.
+  Repository reads and external commands follow the selected worktree.
 - **Copy branch name from a commit.** *Fixed:* `C` copies a branch name in
   the commit list and detail view, preferring local branches and offering a
   digit picker when needed. `c` still copies the short SHA. In the refs list,
