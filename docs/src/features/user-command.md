@@ -43,6 +43,21 @@ The fork reserves `d` / `D` for confirmed branch deletion. Use `v` / `V` for
 review commands instead. External deletion commands such as `commands_3` above
 bypass the built-in deletion confirmations and worktree checks.
 
+## Inline diff navigation (prototype)
+
+In an inline command view (`v` by default), press `n` / `N` to jump to the
+next / previous file or hunk. These use the existing `go_to_next` /
+`go_to_previous` bindings. Navigation stops at the ends rather than wrapping.
+Normal scrolling (`5j`, `5k`, `Ctrl-d`, `Ctrl-u`) remains available.
+
+Serie indexes the rendered output; delta still runs with `--paging=never`.
+This prototype recognizes plain Git diff headers and delta's usual Unicode
+file/hunk labels and box/underline decorations, including side-by-side output.
+Custom delta styles that omit or change these markers may not be recognized;
+`navigate-regex` is not read. Non-diff output that resembles these headers may
+also be treated as a stop. No delta configuration changes are required for the
+usual styles.
+
 ## Marked commits
 
 Press `m` to mark a commit and use `{{marked_hash}}` to refer to it in user commands.

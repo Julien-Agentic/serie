@@ -328,6 +328,8 @@ fn build_lines(
 
     let mut user_command_helps = vec![
         (vec![UserEvent::Cancel, UserEvent::Close], "Close user command".into()),
+        (vec![UserEvent::GoToNext], "Next diff file/hunk".into()),
+        (vec![UserEvent::GoToPrevious], "Previous diff file/hunk".into()),
         (vec![UserEvent::NavigateDown], "Scroll down".into()),
         (vec![UserEvent::NavigateUp], "Scroll up".into()),
         (vec![UserEvent::PageDown], "Scroll page down".into()),

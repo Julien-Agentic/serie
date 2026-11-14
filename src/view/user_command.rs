@@ -48,9 +48,12 @@ impl<'a> UserCommandView<'a> {
                 vec![]
             });
 
+        let mut commit_user_command_state = CommitUserCommandState::default();
+        commit_user_command_state.set_navigation_lines(&user_command_output_lines);
+
         UserCommandView {
             commit_list_state: Some(commit_list_state),
-            commit_user_command_state: CommitUserCommandState::default(),
+            commit_user_command_state,
             user_command_number,
             user_command_output_lines,
             ctx,
@@ -93,6 +96,12 @@ impl<'a> UserCommandView<'a> {
                 for _ in 0..count {
                     self.commit_user_command_state.scroll_half_page_up();
                 }
+            }
+            UserEvent::GoToNext => {
+                self.commit_user_command_state.jump_next();
+            }
+            UserEvent::GoToPrevious => {
+                self.commit_user_command_state.jump_previous();
             }
             UserEvent::GoToTop => {
                 self.commit_user_command_state.select_first();
@@ -256,6 +265,8 @@ impl<'a> UserCommandView<'a> {
             vec![]
         });
 
+        self.commit_user_command_state
+            .set_navigation_lines(&self.user_command_output_lines);
         self.commit_user_command_state.select_first();
     }
 
