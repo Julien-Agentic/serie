@@ -3,13 +3,14 @@ name: Deny
 on:
   push:
     branches:
-      - '*'
+      - '**'
     paths:
       - '**/Cargo.lock'
       - '**/Cargo.toml'
       - '**/deny.toml'
   pull_request:
     branches:
+      - main
       - master
     paths:
       - '**/Cargo.lock'

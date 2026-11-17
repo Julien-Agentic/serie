@@ -3,11 +3,12 @@ name: Verify lockfile
 on:
   push:
     branches:
-      - '*'
+      - '**'
     paths:
       - .github/**
   pull_request:
     branches:
+      - main
       - master
     paths:
       - .github/**

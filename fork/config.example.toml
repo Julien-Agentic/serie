@@ -1,0 +1,41 @@
+# Optional setup for this fork; no absolute paths or personal settings.
+# Try with SERIE_CONFIG_FILE=/absolute/path/to/this/file serie.
+# Merge manually into an existing config rather than overwriting it.
+[ui.list]
+columns = ["graph", "marker", "subject"]
+
+[keybind]
+user_command_1 = ["v"]
+user_command_2 = ["shift-v"]
+user_command_3 = ["f"]
+user_command_4 = ["shift-f"]
+
+# Requires bash and delta (git-delta) on PATH.
+# Subtract four columns for Serie's horizontal padding; Serie handles scrolling.
+# Handles root commits and compares merge commits with their first parent.
+[core.user_command.commands_1]
+name = "Delta"
+type = "inline"
+commands = [
+  "bash", "-o", "pipefail", "-c",
+  'git --no-pager show --format= --diff-merges=first-parent --color=always "$1" -- | delta --paging=never --side-by-side --wrap-max-lines=unlimited --width="$2-4"',
+  "serie-delta", "{{target_hash}}", "{{area_width}}",
+]
+
+# Requires hunk on PATH. Quit Hunk to return to Serie.
+[core.user_command.commands_2]
+name = "Hunk"
+type = "suspend"
+commands = ["hunk", "show", "{{target_hash}}"]
+
+[core.user_command.commands_3]
+name = "Fetch"
+type = "silent"
+commands = ["git", "fetch"]
+refresh = true
+
+[core.user_command.commands_4]
+name = "Fetch all and prune"
+type = "silent"
+commands = ["git", "fetch", "--all", "--prune"]
+refresh = true

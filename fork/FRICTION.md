@@ -9,7 +9,7 @@ It decides the order of fork work. Feature descriptions live in
 These block replacing VS Code's Git Graph.
 
 1. **Branch switching.** No searchable branch picker and no way to check out a
-   branch from inside Serie. *Fixed on the `branch-switching` branch:* `Space`
+   branch from inside Serie. *Fixed in the fork:* `Space`
    on a commit switches to the branch whose head it is, as in LazyGit.
 2. **Branch deletion, local and remote.** *Fixed:* `d` safely deletes and `D`
    explicitly force-deletes local branches, with confirmation. Remote deletion

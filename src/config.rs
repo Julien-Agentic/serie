@@ -443,6 +443,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_fork_example_config() {
+        let config: Config =
+            toml::from_str::<OptionalConfig>(include_str!("../fork/config.example.toml"))
+                .unwrap()
+                .into();
+        config.validate().unwrap();
+    }
+
+    #[test]
     fn test_config_default() {
         let actual = Config::default();
         let expected = Config {

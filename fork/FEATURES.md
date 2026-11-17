@@ -19,9 +19,10 @@ A full Git client is explicitly out of scope for now.
 - **Proposed:** discussed for the fork; not implemented.
 - **Considered:** a possible follow-up, not an agreed requirement.
 
-The configurations made during this session live outside this repository. The
-fork is this repository: upstream Serie is the `upstream` remote and fork work
-happens on feature branches.
+A portable version of the optional tool configuration is checked in as
+[config.example.toml](config.example.toml); installed personal configuration stays
+outside the repository. The complete fork lives on `main`, with `origin` pointing
+to our fork and `upstream` to original Serie. See [DEVELOPMENT.md](DEVELOPMENT.md).
 
 ## Existing Serie features to preserve
 
@@ -89,7 +90,7 @@ Configuration: `~/.config/fish/config.fish` and `~/.gitconfig`.
 Existing shells and running applications need their environment updated or a
 restart to pick up the editor change.
 
-## Proposed additions to the fork
+## Fork additions and follow-ups
 
 ### Faster interactive-tool handoff — Implemented
 
@@ -103,8 +104,7 @@ restart to pick up the editor change.
 
 ### Branch picker and switching — Implemented
 
-On the `branch-switching` branch. The primary control follows LazyGit: put the
-cursor on a commit and press `Space`.
+The primary control follows LazyGit: put the cursor on a commit and press `Space`.
 
 In the commit list:
 

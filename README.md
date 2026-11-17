@@ -1,5 +1,9 @@
 # Serie
 
+> **Personal fork:** For this fork's features, installation, and optional tool
+> configuration, see [fork/README.md](fork/README.md). The installation options
+> below refer to upstream Serie, not this fork.
+
 [![Crate Status](https://img.shields.io/crates/v/serie.svg)](https://crates.io/crates/serie)
 [![Built With Ratatui](https://img.shields.io/badge/Built_With-Ratatui-000?logo=ratatui&logoColor=fff&labelColor=000&color=fff)](https://ratatui.rs)
 
