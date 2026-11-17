@@ -253,8 +253,8 @@ mod tests {
     fn test_default_branch_navigation_keybindings() {
         let keybind = KeyBind::new(None);
         for (key, event) in [
-            ('{', UserEvent::GoToPreviousBranch),
-            ('}', UserEvent::GoToNextBranch),
+            ('[', UserEvent::GoToPreviousBranch),
+            (']', UserEvent::GoToNextBranch),
         ] {
             assert_eq!(keybind.get(&KeyEvent::from(KeyCode::Char(key))), Some(&event));
             assert!(event.is_countable());
@@ -264,6 +264,27 @@ mod tests {
         assert_eq!(
             keybind.get(&KeyEvent::new(KeyCode::Char('n'), KeyModifiers::ALT)),
             Some(&UserEvent::GoToNextBranch),
+        );
+    }
+
+    #[test]
+    fn test_default_lineage_keybindings_and_customization() {
+        let keybind = KeyBind::new(None);
+        for (key, event) in [('}', UserEvent::LineageRoot), ('{', UserEvent::LineageTip)] {
+            assert_eq!(
+                keybind.get(&KeyEvent::from(KeyCode::Char(key))),
+                Some(&event)
+            );
+        }
+        let custom = toml::from_str("lineage_root = ['alt-h']\nlineage_tip = ['alt-l']").unwrap();
+        let keybind = KeyBind::new(Some(custom));
+        assert_eq!(
+            keybind.get(&KeyEvent::new(KeyCode::Char('h'), KeyModifiers::ALT)),
+            Some(&UserEvent::LineageRoot)
+        );
+        assert_eq!(
+            keybind.get(&KeyEvent::new(KeyCode::Char('l'), KeyModifiers::ALT)),
+            Some(&UserEvent::LineageTip)
         );
     }
 

@@ -1,10 +1,6 @@
 use std::{
     fmt::{self, Debug, Formatter},
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        mpsc, Arc, Mutex,
-    },
-    thread,
+    sync::mpsc,
 };
 
 use ratatui::crossterm::event::KeyEvent;
@@ -25,6 +21,7 @@ pub enum AppEvent {
     Quit,
     OpenDetail,
     CloseDetail,
+    OpenFile(String),
     OpenUserCommand(usize),
     CloseUserCommand,
     OpenRefs,
@@ -69,7 +66,6 @@ pub enum AppEvent {
         options: String,
         matched: bool,
     },
-    #[expect(dead_code)]
     NotifyInfo(String),
     NotifySuccess(String),
     #[expect(dead_code)]
@@ -114,8 +110,7 @@ impl Debug for Receiver {
 pub struct EventController {
     tx: Sender,
     rx: Receiver,
-    stop: Arc<AtomicBool>,
-    handle: Arc<Mutex<Option<thread::JoinHandle<()>>>>,
+    read_input: bool,
 }
 
 impl EventController {
@@ -125,8 +120,7 @@ impl EventController {
         Self {
             tx: Sender { tx },
             rx: Receiver { rx },
-            stop: Arc::new(AtomicBool::new(false)),
-            handle: Arc::new(Mutex::new(None)),
+            read_input: false,
         }
     }
 
@@ -135,49 +129,11 @@ impl EventController {
         let tx = Sender { tx };
         let rx = Receiver { rx };
 
-        let controller = EventController {
-            tx: tx.clone(),
+        EventController {
+            tx,
             rx,
-            stop: Arc::new(AtomicBool::new(false)),
-            handle: Arc::new(Mutex::new(None)),
-        };
-        controller.start();
-
-        controller
-    }
-
-    pub fn start(&self) {
-        self.stop.store(false, Ordering::Relaxed);
-        let stop = self.stop.clone();
-        let tx = self.tx.clone();
-        let handle = thread::spawn(move || loop {
-            if stop.load(Ordering::Relaxed) {
-                break;
-            }
-            match ratatui::crossterm::event::poll(std::time::Duration::from_millis(100)) {
-                Ok(true) => match ratatui::crossterm::event::read() {
-                    Ok(e) => match e {
-                        ratatui::crossterm::event::Event::Key(key) => {
-                            tx.send(AppEvent::Key(key));
-                        }
-                        ratatui::crossterm::event::Event::Resize(w, h) => {
-                            tx.send(AppEvent::Resize(w as usize, h as usize));
-                        }
-                        _ => {}
-                    },
-                    Err(e) => {
-                        panic!("Failed to read event: {e}");
-                    }
-                },
-                Ok(false) => {
-                    continue;
-                }
-                Err(e) => {
-                    panic!("Failed to poll event: {e}");
-                }
-            }
-        });
-        *self.handle.lock().unwrap() = Some(handle);
+            read_input: true,
+        }
     }
 
     pub fn resume(&self) {
@@ -189,25 +145,17 @@ impl EventController {
         ratatui::crossterm::terminal::enable_raw_mode().unwrap();
 
         self.drain_crossterm_event();
-        self.start();
     }
 
     pub fn suspend(&self) {
-        self.stop();
-
+        // Input is read only by recv(), on the application thread. There is no
+        // background poll to join or reader competing with the external app.
         ratatui::crossterm::terminal::disable_raw_mode().unwrap();
         ratatui::crossterm::execute!(
             std::io::stdout(),
             ratatui::crossterm::terminal::LeaveAlternateScreen
         )
         .unwrap();
-    }
-
-    fn stop(&self) {
-        self.stop.store(true, Ordering::Relaxed);
-        if let Some(handle) = self.handle.lock().unwrap().take() {
-            handle.join().unwrap();
-        }
     }
 
     fn drain_crossterm_event(&self) {
@@ -225,7 +173,37 @@ impl EventController {
     }
 
     pub fn recv(&self) -> AppEvent {
-        self.rx.recv()
+        if !self.read_input {
+            return self.rx.recv();
+        }
+        self.recv_with(|| {
+            if !ratatui::crossterm::event::poll(std::time::Duration::from_millis(100))
+                .expect("Failed to poll event")
+            {
+                return None;
+            }
+            match ratatui::crossterm::event::read().expect("Failed to read event") {
+                ratatui::crossterm::event::Event::Key(key) => Some(AppEvent::Key(key)),
+                ratatui::crossterm::event::Event::Resize(w, h) => {
+                    Some(AppEvent::Resize(w as usize, h as usize))
+                }
+                _ => None,
+            }
+        })
+    }
+
+    fn recv_with(&self, mut read_input: impl FnMut() -> Option<AppEvent>) -> AppEvent {
+        loop {
+            // Finish actions queued by the last key before reading another one.
+            // The timeout in recv bounds delivery of future background messages;
+            // it does not delay input or handing the terminal to another app.
+            if let Ok(event) = self.rx.rx.try_recv() {
+                return event;
+            }
+            if let Some(event) = read_input() {
+                return event;
+            }
+        }
     }
 }
 
@@ -248,6 +226,8 @@ pub enum UserEvent {
     GoToParent,
     GoToNextBranch,
     GoToPreviousBranch,
+    LineageRoot,
+    LineageTip,
     ScrollUp,
     ScrollDown,
     PageUp,
@@ -262,6 +242,7 @@ pub enum UserEvent {
     Confirm,
     RefList,
     WorktreeList,
+    EditFile,
     Search,
     UserCommand(usize),
     SearchTargetToggle,
@@ -323,6 +304,8 @@ impl<'de> Deserialize<'de> for UserEvent {
                         "go_to_parent" => Ok(UserEvent::GoToParent),
                         "go_to_next_branch" => Ok(UserEvent::GoToNextBranch),
                         "go_to_previous_branch" => Ok(UserEvent::GoToPreviousBranch),
+                        "lineage_root" => Ok(UserEvent::LineageRoot),
+                        "lineage_tip" => Ok(UserEvent::LineageTip),
                         "scroll_up" => Ok(UserEvent::ScrollUp),
                         "scroll_down" => Ok(UserEvent::ScrollDown),
                         "page_up" => Ok(UserEvent::PageUp),
@@ -337,6 +320,7 @@ impl<'de> Deserialize<'de> for UserEvent {
                         "confirm" => Ok(UserEvent::Confirm),
                         "ref_list" | "ref_list_toggle" => Ok(UserEvent::RefList),
                         "worktree_list" => Ok(UserEvent::WorktreeList),
+                        "edit_file" => Ok(UserEvent::EditFile),
                         "search" => Ok(UserEvent::Search),
                         "search_target_toggle" => Ok(UserEvent::SearchTargetToggle),
                         "ignore_case_toggle" => Ok(UserEvent::IgnoreCaseToggle),
@@ -421,6 +405,46 @@ impl UserEventWithCount {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_queued_action_is_processed_before_more_terminal_input() {
+        let controller = EventController::without_input();
+        controller.send(AppEvent::OpenUserCommand(2));
+        let event = controller.recv_with(|| panic!("must not read ahead of a queued action"));
+        assert!(matches!(event, AppEvent::OpenUserCommand(2)));
+    }
+
+    #[test]
+    fn test_input_is_not_read_ahead_after_launch_key() {
+        let controller = EventController::without_input();
+        let mut reads = 0;
+        let event = controller.recv_with(|| {
+            reads += 1;
+            Some(AppEvent::Key(KeyEvent::from(
+                ratatui::crossterm::event::KeyCode::Char('V'),
+            )))
+        });
+        assert!(matches!(event, AppEvent::Key(_)));
+        assert_eq!(reads, 1);
+        controller.send(AppEvent::OpenUserCommand(2));
+        assert!(matches!(
+            controller.recv_with(|| panic!("no competing input reader during launch")),
+            AppEvent::OpenUserCommand(2)
+        ));
+    }
+
+    #[test]
+    fn test_background_event_delivered_after_input_poll_timeout() {
+        let controller = EventController::without_input();
+        let mut polls = 0;
+        let event = controller.recv_with(|| {
+            polls += 1;
+            controller.send(AppEvent::Resize(80, 24));
+            None
+        });
+        assert!(matches!(event, AppEvent::Resize(80, 24)));
+        assert_eq!(polls, 1);
+    }
 
     #[test]
     fn test_user_event_with_count_new() {

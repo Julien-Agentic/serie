@@ -237,6 +237,8 @@ fn build_lines(
         (vec![UserEvent::GoToParent], "Go to parent".into()),
         (vec![UserEvent::GoToNextBranch], "Go to next branch tip".into()),
         (vec![UserEvent::GoToPreviousBranch], "Go to previous branch tip".into()),
+        (vec![UserEvent::LineageRoot], "Follow lineage toward root".into()),
+        (vec![UserEvent::LineageTip], "Follow lineage toward tips (choose at forks)".into()),
         (vec![UserEvent::GoToTop], "Go to top".into()),
         (vec![UserEvent::GoToBottom], "Go to bottom".into()),
         (vec![UserEvent::PageDown], "Scroll page down".into()),
@@ -273,9 +275,11 @@ fn build_lines(
     let (list_key_lines, list_value_lines) = build_block_lines("Commit List:", list_helps, color_theme, keybind);
     
     let mut detail_helps = vec![
+        (vec![UserEvent::RefList], "Toggle text/file-list focus".into()),
+        (vec![UserEvent::EditFile], "Edit selected working-tree file (not historical)".into()),
         (vec![UserEvent::Cancel, UserEvent::Close, UserEvent::Confirm], "Close commit details".into()),
-        (vec![UserEvent::NavigateDown], "Scroll down".into()),
-        (vec![UserEvent::NavigateUp], "Scroll up".into()),
+        (vec![UserEvent::NavigateDown], "Scroll down / select next file".into()),
+        (vec![UserEvent::NavigateUp], "Scroll up / select previous file".into()),
         (vec![UserEvent::PageDown], "Scroll page down".into()),
         (vec![UserEvent::PageUp], "Scroll page up".into()),
         (vec![UserEvent::HalfPageDown], "Scroll half page down".into()),

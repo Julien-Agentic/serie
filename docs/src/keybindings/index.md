@@ -4,6 +4,30 @@ You can see the keybindings by pressing the `?` key.
 
 The default key bindings can be overridden.
 
+## Lineage navigation (prototype)
+
+In the commit list, `}` moves toward the root and `{` toward newer tips along
+first-parent relationships. Navigation skips linear stretches, stopping at
+local/remote branch tips, fork points (even without a branch name), and loaded
+roots or leaves. Unlike `[` / `]`, these actions follow ancestry, not row order.
+
+At an ambiguous fork, `{` opens a chooser in the status line. Use `j` / `k`
+(or Down / Up, or `{` for the next choice) to cycle paths, `Enter` to follow,
+and `Esc` (or `}`) to cancel without moving. The chooser shows the next
+landmark's branch names, or its short hash and subject if unlabelled. Choices
+are ordered by graph display order. No checkout is performed.
+
+The path you descended or explicitly chose is preselected when you return to
+that fork. You still confirm at forks so another path remains easy to choose.
+Path memory lasts for the loaded commit-list state and resets on repository
+refresh. These prototype actions don't accept numeric repeat counts.
+
+Merge second-parent edges are deliberately excluded: this navigates a
+first-parent forest, not inferred branch creation history. Navigation never
+crosses unrelated roots or loads commits beyond `--max-count`. Squash merges,
+rebases, and deleted refs may mean the original branch family is no longer
+represented in the graph.
+
 ## List of all default keybindings
 
 #### Common
@@ -29,7 +53,9 @@ The default key bindings can be overridden.
 | <kbd>Tab</kbd>                       | Open refs list                                     | `ref_list`                                   |
 | <kbd>w</kbd>                         | Open worktree picker                               | `worktree_list`                              |
 | <kbd>Space</kbd>                     | Switch to the branch at the selected commit        | `switch_branch`                              |
-| <kbd>{/}</kbd>                       | Go to previous/next branch tip                     | `go_to_previous_branch` `go_to_next_branch`  |
+| <kbd>[/]</kbd>                       | Go to previous/next branch tip                     | `go_to_previous_branch` `go_to_next_branch`  |
+| <kbd>}</kbd>                         | Follow first-parent lineage toward root            | `lineage_root`                             |
+| <kbd>{</kbd>                         | Follow lineage toward tips; choose at forks         | `lineage_tip`                              |
 | <kbd>&lt;/&gt;</kbd>                 | Narrow/widen the graph column                      | `graph_narrower` `graph_wider`               |
 | <kbd>/</kbd>                         | Start search                                       | `search`                                     |
 | <kbd>Esc</kbd>                       | Cancel search                                      | `cancel`                                     |
@@ -46,10 +72,29 @@ The default key bindings can be overridden.
 
 #### Commit Detail
 
+Press <kbd>Tab</kbd> to focus the changed-file list, then use arrows or
+<kbd>j/k</kbd> to select a file. Press <kbd>e</kbd> to edit its **current
+working-tree version**, not the historical content of the selected commit.
+<kbd>Tab</kbd> again restores text scrolling. File navigation also supports counts,
+page/half-page movement, and <kbd>g/G</kbd>, without wrapping. <kbd>J/K</kbd>
+continues to change commits and resets the file selection to the first file.
+
+The editor is `$VISUAL`, then `$EDITOR`, falling back to `vi`; flags and quoted
+editor paths are supported. Serie suspends while the editor runs and returns to
+the same selection. Paths are relative to the active worktree root, even when
+launched from a subdirectory. Renames use the destination path. Missing files
+are not recreated; directories/submodules and symlinks resolving outside the
+worktree are not opened. Opening historical file contents remains out of scope.
+<kbd>R</kbd> preserves the file selection by path and the current focus/scroll.
+<kbd>e</kbd> also works while text is focused, using the retained file selection
+(the first changed file by default).
+
 | Key                                  | Description                     | Corresponding keybind           |
 | ------------------------------------ | ------------------------------- | ------------------------------- |
-| <kbd>Esc</kbd> <kbd>Backspace</kbd>  | Close commit details            | `close` `cancel`                |
-| <kbd>Down/Up</kbd> <kbd>j/k</kbd>    | Scroll down/up                  | `navigate_down` `navigate_up`   |
+| <kbd>Enter</kbd> <kbd>Esc</kbd> <kbd>Backspace</kbd> | Close commit details | `confirm` `close` `cancel` |
+| <kbd>Tab</kbd> | Toggle text/file-list focus | `ref_list` |
+| <kbd>e</kbd> | Edit selected working-tree file | `edit_file` |
+| <kbd>Down/Up</kbd> <kbd>j/k</kbd>    | Scroll text or select next/previous file | `navigate_down` `navigate_up` |
 | <kbd>Ctrl-f/b</kbd>                  | Scroll page down/up             | `page_down` `page_up`           |
 | <kbd>Ctrl-d/u</kbd>                  | Scroll half page down/up        | `half_page_down` `half_page_up` |
 | <kbd>g/G</kbd>                       | Go to top/bottom                | `go_to_top` `go_to_bottom`      |

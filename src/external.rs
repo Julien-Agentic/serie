@@ -1,8 +1,72 @@
-use std::{cell::RefCell, process::Command};
+use std::{
+    cell::RefCell,
+    path::{Component, Path, PathBuf},
+    process::Command,
+};
 
 use arboard::Clipboard;
 
 use crate::config::ClipboardConfig;
+
+/// Resolve an existing working-tree file, never materialize historical content.
+pub fn working_tree_file(root: &Path, relative: &Path) -> Result<PathBuf, String> {
+    if relative.as_os_str().is_empty()
+        || relative
+            .components()
+            .any(|c| !matches!(c, Component::Normal(_)))
+    {
+        return Err("Invalid repository-relative file path".into());
+    }
+    let root = root
+        .canonicalize()
+        .map_err(|error| format!("Cannot open worktree: {error}"))?;
+    let path = root.join(relative);
+    let resolved = path.canonicalize().map_err(|error| {
+        format!(
+            "Working-tree file {} is unavailable: {error}. Historical content is not opened",
+            path.display()
+        )
+    })?;
+    if !resolved.starts_with(&root) {
+        return Err("File resolves outside the selected worktree; not opening".into());
+    }
+    if !resolved.is_file() {
+        return Err("Selected path is not a regular working-tree file (directories/submodules are not opened)".into());
+    }
+    // Keep the repository pathname for editors rather than the symlink target.
+    Ok(path)
+}
+
+fn preferred_editor(visual: Option<String>, editor: Option<String>) -> String {
+    visual
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| editor.filter(|value| !value.trim().is_empty()))
+        .unwrap_or_else(|| "vi".into())
+}
+
+fn editor_command(root: &Path, file: &Path, editor: &str) -> Command {
+    // The editor is trusted user configuration and may contain flags/quoting.
+    // The filename is passed separately, never interpolated into shell source.
+    let mut command = Command::new("sh");
+    command
+        .arg("-c")
+        .arg(format!("exec {editor} \"$@\""))
+        .arg("serie-editor")
+        .arg(file)
+        .current_dir(root);
+    command
+}
+
+pub fn exec_editor(root: &Path, file: &Path) -> Result<(), String> {
+    let editor = preferred_editor(std::env::var("VISUAL").ok(), std::env::var("EDITOR").ok());
+    let status = editor_command(root, file, &editor)
+        .status()
+        .map_err(|error| format!("Failed to launch editor: {error}"))?;
+    if !status.success() {
+        return Err(format!("Editor exited with {status}"));
+    }
+    Ok(())
+}
 
 const USER_COMMAND_MARKER_PREFIX: &str = "{{";
 const USER_COMMAND_TARGET_HASH_MARKER: &str = "{{target_hash}}";
@@ -172,4 +236,65 @@ fn replace_command_arg(s: &str, params: &ExternalCommandParameters) -> String {
         .replace(USER_COMMAND_STASH_MARKER, stash)
         .replace(USER_COMMAND_AREA_WIDTH_MARKER, area_width)
         .replace(USER_COMMAND_AREA_HEIGHT_MARKER, area_height)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_editor_precedence_and_fallback() {
+        assert_eq!(
+            preferred_editor(Some("nvim -f".into()), Some("vim".into())),
+            "nvim -f"
+        );
+        assert_eq!(
+            preferred_editor(Some(" ".into()), Some("vim".into())),
+            "vim"
+        );
+        assert_eq!(preferred_editor(None, Some("".into())), "vi");
+    }
+
+    #[test]
+    fn test_editor_gets_literal_filename_and_worktree_directory() {
+        let root = tempfile::tempdir().unwrap();
+        let name = "file ' ; $(touch injected)\t\n.txt";
+        std::fs::write(root.path().join(name), "current version").unwrap();
+        let path = working_tree_file(root.path(), Path::new(name)).unwrap();
+        let output = editor_command(
+            root.path(),
+            &path,
+            "sh -c 'printf \"%s\\n\" \"$PWD\" \"$@\"' editor-test",
+        )
+        .output()
+        .unwrap();
+        assert!(output.status.success());
+        let expected = format!(
+            "{}\n{}\n",
+            root.path().canonicalize().unwrap().display(),
+            path.display()
+        );
+        assert_eq!(String::from_utf8(output.stdout).unwrap(), expected);
+        assert!(!root.path().join("injected").exists());
+    }
+
+    #[test]
+    fn test_missing_directories_and_escaping_paths_are_not_opened() {
+        let root = tempfile::tempdir().unwrap();
+        for relative in ["deleted.txt", "../outside", "/absolute", "", "."] {
+            assert!(working_tree_file(root.path(), Path::new(relative)).is_err());
+        }
+        std::fs::create_dir(root.path().join("submodule")).unwrap();
+        assert!(working_tree_file(root.path(), Path::new("submodule")).is_err());
+        assert!(!root.path().join("deleted.txt").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_symlink_outside_worktree_is_not_opened() {
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::NamedTempFile::new().unwrap();
+        std::os::unix::fs::symlink(outside.path(), root.path().join("link")).unwrap();
+        assert!(working_tree_file(root.path(), Path::new("link")).is_err());
+    }
 }

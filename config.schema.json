@@ -666,6 +666,14 @@
         "go_to_previous_branch": {
           "$ref": "#/definitions/keybindArray"
         },
+        "lineage_root": {
+          "description": "Follow first-parent ancestry to the next branch tip, fork, or loaded root.",
+          "$ref": "#/definitions/keybindArray"
+        },
+        "lineage_tip": {
+          "description": "Follow first-parent descendants to the next landmark, choosing a path at forks.",
+          "$ref": "#/definitions/keybindArray"
+        },
         "go_to_top": {
           "$ref": "#/definitions/keybindArray"
         },
@@ -712,6 +720,9 @@
           "$ref": "#/definitions/keybindArray"
         },
         "worktree_list": {
+          "$ref": "#/definitions/keybindArray"
+        },
+        "edit_file": {
           "$ref": "#/definitions/keybindArray"
         },
         "search": {

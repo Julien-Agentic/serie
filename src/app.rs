@@ -22,7 +22,8 @@ use crate::{
     config::{CoreConfig, CursorType, UiConfig, UserCommand, UserCommandType},
     event::{AppEvent, EventController, UserEvent, UserEventWithCount},
     external::{
-        copy_to_clipboard, exec_user_command, exec_user_command_suspend, ExternalCommandParameters,
+        copy_to_clipboard, exec_editor, exec_user_command, exec_user_command_suspend,
+        working_tree_file, ExternalCommandParameters,
     },
     git::{
         BranchTarget, BranchesAtCommit, Commit, CommitHash, DeleteBranchError, FileChange, Head,
@@ -319,6 +320,7 @@ impl App<'_> {
                     self.open_detail();
                     self.app_status.pending_clear = PendingClear::ViewImages;
                 }
+                AppEvent::OpenFile(path) => self.open_file(&path),
                 AppEvent::CloseDetail => {
                     self.close_detail();
                     self.app_status.pending_clear = PendingClear::Screen;
@@ -636,6 +638,31 @@ impl App<'_> {
         );
     }
 
+    fn open_file(&mut self, relative: &str) {
+        let prepared = self.repository.worktree_root().and_then(|root| {
+            working_tree_file(&root, std::path::Path::new(relative)).map(|file| (root, file))
+        });
+        let (root, file) = match prepared {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                self.error_notification(error);
+                return;
+            }
+        };
+        // Resolve/validate before suspending, so a deleted file never opens an
+        // empty editor buffer. Always resume Serie, including on editor failures.
+        self.ec.suspend();
+        let result = exec_editor(&root, &file);
+        self.ec.resume();
+        self.app_status.pending_clear = PendingClear::Screen;
+        match result {
+            Ok(()) => {
+                self.info_notification(format!("Edited working-tree file {}", file.display()))
+            }
+            Err(error) => self.error_notification(error),
+        }
+    }
+
     fn close_detail(&mut self) {
         if let View::Detail(ref mut view) = self.view {
             let commit_list_state = view.take_list_state();
@@ -670,7 +697,7 @@ impl App<'_> {
             View::UserCommand(ref mut view) => view.as_list_state(),
             _ => return,
         };
-        let (commit, _, refs) = selected_commit_details(self.repository, commit_list_state);
+        let (commit, refs) = selected_commit_metadata(self.repository, commit_list_state);
         let result = build_external_command_parameters_and_exec_command(
             &commit,
             &refs,
@@ -709,7 +736,7 @@ impl App<'_> {
             View::UserCommand(ref mut view) => view.as_list_state(),
             _ => return,
         };
-        let (commit, _, refs) = selected_commit_details(self.repository, commit_list_state);
+        let (commit, refs) = selected_commit_metadata(self.repository, commit_list_state);
         let result = build_external_command_parameters_and_exec_command(
             &commit,
             &refs,
@@ -737,7 +764,7 @@ impl App<'_> {
             View::UserCommand(ref mut view) => view.as_list_state(),
             _ => return,
         };
-        let (commit, _, refs) = selected_commit_details(self.repository, commit_list_state);
+        let (commit, refs) = selected_commit_metadata(self.repository, commit_list_state);
         match build_external_command_parameters(
             &commit,
             &refs,
@@ -901,8 +928,11 @@ impl App<'_> {
                     view.select_path(&path);
                 }
             }
-            RefreshViewContext::Detail { .. } => {
+            RefreshViewContext::Detail { detail_context, .. } => {
                 self.open_detail();
+                if let View::Detail(view) = &mut self.view {
+                    view.restore_detail(detail_context);
+                }
             }
             RefreshViewContext::UserCommand {
                 user_command_context,
@@ -1325,6 +1355,18 @@ fn status_line_with_metadata<'a>(
     message
 }
 
+// User commands need only cached metadata; computing a changed-file summary
+// here adds an unnecessary Git process before Hunk/Delta can start.
+fn selected_commit_metadata(
+    repository: &Repository,
+    commit_list_state: &CommitListState,
+) -> (Commit, Vec<Ref>) {
+    let selected = commit_list_state.selected_commit_hash();
+    let commit = repository.commit(selected).unwrap().clone();
+    let refs = repository.refs(selected).into_iter().cloned().collect();
+    (commit, refs)
+}
+
 fn selected_commit_details(
     repository: &Repository,
     commit_list_state: &CommitListState,
@@ -1497,6 +1539,104 @@ mod tests {
             &ec,
         );
         f(&mut app);
+    }
+
+    #[test]
+    fn test_detail_file_selection_edit_event_and_refresh_restoration() {
+        with_deletion_app_setup(
+            |root| {
+                for name in ["a.txt", "b file.txt", "c.txt"] {
+                    std::fs::write(root.join(name), name).unwrap();
+                }
+                git_stdout(root, &["add", "."]);
+                git_stdout(root, &["commit", "-m", "add files"]);
+            },
+            |app| {
+                app.open_detail();
+                let view = if let View::Detail(view) = &mut app.view {
+                    view
+                } else {
+                    panic!()
+                };
+                let key = KeyEvent::from(KeyCode::Null);
+                assert_eq!(view.selected_file().unwrap().path(), "a.txt");
+                view.handle_event(UserEventWithCount::from_event(UserEvent::RefList), key);
+                view.handle_event(UserEventWithCount::from_event(UserEvent::NavigateDown), key);
+                assert_eq!(view.selected_file().unwrap().path(), "b file.txt");
+                view.handle_event(UserEventWithCount::from_event(UserEvent::EditFile), key);
+                assert!(matches!(app.ec.recv(), AppEvent::OpenFile(path) if path == "b file.txt"));
+                view.refresh();
+                let AppEvent::Refresh(context) = app.ec.recv() else {
+                    panic!()
+                };
+                assert!(
+                    matches!(&context, RefreshViewContext::Detail { detail_context, .. }
+                    if detail_context.files_focused && detail_context.selected_path.as_deref() == Some("b file.txt"))
+                );
+                app.close_detail();
+                app.init_with_context(context);
+                let view = if let View::Detail(view) = &mut app.view {
+                    view
+                } else {
+                    panic!()
+                };
+                assert_eq!(view.selected_file().unwrap().path(), "b file.txt");
+                view.handle_event(UserEventWithCount::from_event(UserEvent::GoToBottom), key);
+                assert_eq!(view.selected_file().unwrap().path(), "c.txt");
+                view.handle_event(UserEventWithCount::from_event(UserEvent::NavigateDown), key);
+                assert_eq!(view.selected_file().unwrap().path(), "c.txt");
+                view.handle_event(UserEventWithCount::from_event(UserEvent::GoToTop), key);
+                assert_eq!(view.selected_file().unwrap().path(), "a.txt");
+                view.handle_event(UserEventWithCount::new(UserEvent::NavigateDown, 2), key);
+                assert_eq!(view.selected_file().unwrap().path(), "c.txt");
+                view.handle_event(UserEventWithCount::new(UserEvent::NavigateUp, 100), key);
+                assert_eq!(view.selected_file().unwrap().path(), "a.txt");
+                // Toggling back to text scrolling must not move the file selection.
+                view.handle_event(UserEventWithCount::from_event(UserEvent::RefList), key);
+                view.handle_event(UserEventWithCount::from_event(UserEvent::NavigateDown), key);
+                assert_eq!(view.selected_file().unwrap().path(), "a.txt");
+                app.close_detail();
+                app.open_detail();
+                let mut terminal = Terminal::new(TestBackend::new(80, 20)).unwrap();
+                app.view.update_layout(Rect::new(0, 0, 80, 20));
+                app.view.prepare_graph_uploads();
+                terminal
+                    .draw(|frame| app.view.render(frame, frame.area()))
+                    .unwrap();
+            },
+        );
+    }
+
+    #[test]
+    fn test_empty_detail_file_list_and_missing_file_do_not_launch_editor() {
+        with_deletion_app(|app| {
+            app.open_detail();
+            if let View::Detail(view) = &mut app.view {
+                view.handle_event(
+                    UserEventWithCount::from_event(UserEvent::RefList),
+                    KeyEvent::from(KeyCode::Tab),
+                );
+                view.handle_event(
+                    UserEventWithCount::from_event(UserEvent::NavigateDown),
+                    KeyEvent::from(KeyCode::Down),
+                );
+                assert!(view.selected_file().is_none());
+                view.handle_event(
+                    UserEventWithCount::from_event(UserEvent::EditFile),
+                    KeyEvent::from(KeyCode::Char('e')),
+                );
+                assert!(
+                    matches!(app.ec.recv(), AppEvent::NotifyInfo(text) if text.contains("No changed file"))
+                );
+            } else {
+                panic!()
+            }
+            app.open_file("missing-file.txt");
+            assert!(
+                matches!(&app.app_status.status_line, StatusLine::NotificationError(text) if text.contains("Historical content is not opened"))
+            );
+            assert!(matches!(app.view, View::Detail(_)));
+        });
     }
 
     #[test]

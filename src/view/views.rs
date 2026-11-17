@@ -212,6 +212,7 @@ pub enum RefreshViewContext {
     },
     Detail {
         list_context: ListRefreshViewContext,
+        detail_context: DetailRefreshViewContext,
     },
     UserCommand {
         list_context: ListRefreshViewContext,
@@ -227,7 +228,7 @@ impl RefreshViewContext {
     pub fn list_context(&self) -> &ListRefreshViewContext {
         match self {
             RefreshViewContext::List { list_context }
-            | RefreshViewContext::Detail { list_context }
+            | RefreshViewContext::Detail { list_context, .. }
             | RefreshViewContext::UserCommand { list_context, .. }
             | RefreshViewContext::Refs { list_context, .. }
             | RefreshViewContext::Worktrees { list_context, .. } => list_context,
@@ -265,6 +266,13 @@ impl From<&CommitListState<'_>> for ListRefreshViewContext {
             search_context,
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct DetailRefreshViewContext {
+    pub selected_path: Option<String>,
+    pub files_focused: bool,
+    pub offset: usize,
 }
 
 #[derive(Debug, Clone)]

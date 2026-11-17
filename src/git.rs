@@ -1130,77 +1130,76 @@ pub enum FileChange {
     Move { from: String, to: String },
 }
 
-pub fn get_diff_summary(path: &Path, commit_hash: &CommitHash) -> Vec<FileChange> {
-    let mut cmd = Command::new("git")
-        .arg("diff")
-        .arg("--name-status")
-        .arg(format!("{}^", commit_hash.0))
-        .arg(&commit_hash.0)
-        .current_dir(path)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
-
-    let stdout = cmd.stdout.take().expect("failed to open stdout");
-
-    let reader = BufReader::new(stdout);
-
-    let mut changes = Vec::new();
-
-    for line in reader.lines() {
-        let line = line.unwrap();
-        let parts: Vec<&str> = line.split('\t').collect();
-
-        match &parts[0][0..1] {
-            "A" => changes.push(FileChange::Add {
-                path: parts[1].into(),
-            }),
-            "M" => changes.push(FileChange::Modify {
-                path: parts[1].into(),
-            }),
-            "D" => changes.push(FileChange::Delete {
-                path: parts[1].into(),
-            }),
-            "R" => changes.push(FileChange::Move {
-                from: parts[1].into(),
-                to: parts[2].into(),
-            }),
-            _ => {}
+impl FileChange {
+    /// Renames open the destination's current working-tree version.
+    pub fn path(&self) -> &str {
+        match self {
+            Self::Add { path } | Self::Modify { path } | Self::Delete { path } => path,
+            Self::Move { to, .. } => to,
         }
     }
+}
 
-    cmd.wait().unwrap();
+pub fn get_diff_summary(path: &Path, commit_hash: &CommitHash) -> Vec<FileChange> {
+    let output = run_git(
+        path,
+        &[
+            "diff",
+            "--name-status",
+            "-z",
+            "--find-renames",
+            "--no-relative",
+            &format!("{}^", commit_hash.0),
+            &commit_hash.0,
+            "--",
+        ],
+    )
+    .unwrap_or_default();
+    parse_diff_summary(&output)
+}
 
+fn parse_diff_summary(output: &str) -> Vec<FileChange> {
+    let mut fields = output.split_terminator('\0');
+    let mut changes = Vec::new();
+    while let (Some(status), Some(path)) = (fields.next(), fields.next()) {
+        let change = match status.as_bytes().first() {
+            Some(b'A') => FileChange::Add { path: path.into() },
+            Some(b'M' | b'T') => FileChange::Modify { path: path.into() },
+            Some(b'D') => FileChange::Delete { path: path.into() },
+            Some(b'R' | b'C') => {
+                let Some(to) = fields.next() else { break };
+                if status.starts_with('R') {
+                    FileChange::Move {
+                        from: path.into(),
+                        to: to.into(),
+                    }
+                } else {
+                    FileChange::Add { path: to.into() }
+                }
+            }
+            _ => continue,
+        };
+        changes.push(change);
+    }
     changes
 }
 
 pub fn get_initial_commit_additions(path: &Path, commit_hash: &CommitHash) -> Vec<FileChange> {
-    let mut cmd = Command::new("git")
-        .arg("ls-tree")
-        .arg("--name-status")
-        .arg("-r") // the empty tree hash
-        .arg(&commit_hash.0)
-        .current_dir(path)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
-
-    let stdout = cmd.stdout.take().expect("failed to open stdout");
-
-    let reader = BufReader::new(stdout);
-
-    let mut changes = Vec::new();
-
-    for line in reader.lines() {
-        let line = line.unwrap();
-        changes.push(FileChange::Add { path: line });
-    }
-
-    cmd.wait().unwrap();
-
-    changes
+    run_git(
+        path,
+        &[
+            "ls-tree",
+            "--full-tree",
+            "--name-only",
+            "-r",
+            "-z",
+            &commit_hash.0,
+        ],
+    )
+    .unwrap_or_default()
+    .split_terminator('\0')
+    .map(|path| FileChange::Add { path: path.into() })
+    .collect()
 }
 
 #[cfg(test)]
@@ -1291,6 +1290,51 @@ detached
             },
         ];
         assert_eq!(parse_worktrees(porcelain), expected);
+    }
+
+    #[test]
+    fn test_changed_file_paths_preserve_spaces_controls_and_renames() {
+        let changes = parse_diff_summary(
+            "A\0space name\0M\0tab\tname\0D\0old\nname\0R100\0before\0after\0T\0symlink\0",
+        );
+        assert_eq!(
+            changes.iter().map(FileChange::path).collect::<Vec<_>>(),
+            ["space name", "tab\tname", "old\nname", "after", "symlink"]
+        );
+        assert!(
+            matches!(&changes[3], FileChange::Move { from, to } if from == "before" && to == "after")
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let git = GitRepository::new(dir.path());
+        git.init();
+        let name = "file with\tspaces\nand newline.txt";
+        fs::write(dir.path().join(name), "initial").unwrap();
+        run_git(dir.path(), &["add", "."]).unwrap();
+        git.commit("initial", "2026-01-01");
+        let initial: CommitHash = run_git(dir.path(), &["rev-parse", "HEAD"])
+            .unwrap()
+            .trim()
+            .into();
+        let changes = get_initial_commit_additions(dir.path(), &initial);
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].path(), name);
+        let subdir = dir.path().join("subdir");
+        fs::create_dir(&subdir).unwrap();
+        assert_eq!(
+            get_initial_commit_additions(&subdir, &initial)[0].path(),
+            name
+        );
+        // Repository-relative filenames must not depend on launch directory or Git config.
+        run_git(dir.path(), &["config", "diff.relative", "true"]).unwrap();
+        fs::write(dir.path().join(name), "modified").unwrap();
+        run_git(dir.path(), &["add", "."]).unwrap();
+        git.commit("modify", "2026-01-02");
+        let head: CommitHash = run_git(dir.path(), &["rev-parse", "HEAD"])
+            .unwrap()
+            .trim()
+            .into();
+        assert_eq!(get_diff_summary(dir.path(), &head)[0].path(), name);
+        assert_eq!(get_diff_summary(&subdir, &head)[0].path(), name);
     }
 
     #[test]

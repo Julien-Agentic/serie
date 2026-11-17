@@ -41,7 +41,7 @@ impl<'a> DetailView<'a> {
     ) -> DetailView<'a> {
         DetailView {
             commit_list_state: Some(commit_list_state),
-            commit_detail_state: CommitDetailState::default(),
+            commit_detail_state: CommitDetailState::new(changes.len()),
             commit,
             changes,
             refs,
@@ -54,7 +54,43 @@ impl<'a> DetailView<'a> {
         let event = event_with_count.event;
         let count = event_with_count.count;
 
+        if self.commit_detail_state.files_focused() {
+            let selected = self.commit_detail_state.selected_file().unwrap_or(0);
+            let height = self.commit_detail_state.height().max(1);
+            let next = match event {
+                UserEvent::NavigateDown => Some(selected.saturating_add(count)),
+                UserEvent::NavigateUp => Some(selected.saturating_sub(count)),
+                UserEvent::PageDown | UserEvent::SwitchBranch => {
+                    Some(selected.saturating_add(height.saturating_mul(count)))
+                }
+                UserEvent::PageUp => Some(selected.saturating_sub(height.saturating_mul(count))),
+                UserEvent::HalfPageDown => {
+                    Some(selected.saturating_add((height / 2).max(1).saturating_mul(count)))
+                }
+                UserEvent::HalfPageUp => {
+                    Some(selected.saturating_sub((height / 2).max(1).saturating_mul(count)))
+                }
+                UserEvent::GoToTop => Some(0),
+                UserEvent::GoToBottom => Some(self.changes.len().saturating_sub(1)),
+                _ => None,
+            };
+            if let Some(next) = next {
+                self.commit_detail_state
+                    .select_file(next, self.changes.len());
+                return;
+            }
+        }
+
         match event {
+            UserEvent::RefList => self.commit_detail_state.toggle_files(),
+            UserEvent::EditFile => {
+                if let Some(change) = self.selected_file() {
+                    self.tx.send(AppEvent::OpenFile(change.path().into()));
+                } else {
+                    self.tx
+                        .send(AppEvent::NotifyInfo("No changed file to open".into()));
+                }
+            }
             UserEvent::NavigateDown => {
                 for _ in 0..count {
                     self.commit_detail_state.scroll_down();
@@ -185,7 +221,10 @@ impl<'a> DetailView<'a> {
     }
 
     fn split_areas(&self, area: Rect) -> [Rect; 2] {
-        let detail_height = (area.height - 1).min(self.ctx.ui_config.detail.height);
+        let detail_height = area
+            .height
+            .saturating_sub(1)
+            .min(self.ctx.ui_config.detail.height);
         Layout::vertical([Constraint::Min(0), Constraint::Length(detail_height)]).areas(area)
     }
 
@@ -214,7 +253,29 @@ impl<'a> DetailView<'a> {
         self.changes = changes;
         self.refs = refs;
 
-        self.commit_detail_state.select_first();
+        let focused = self.commit_detail_state.files_focused();
+        self.commit_detail_state = CommitDetailState::new(self.changes.len());
+        if focused {
+            self.commit_detail_state.toggle_files();
+        }
+    }
+
+    pub fn selected_file(&self) -> Option<&FileChange> {
+        self.changes.get(self.commit_detail_state.selected_file()?)
+    }
+
+    pub fn restore_detail(&mut self, context: crate::view::DetailRefreshViewContext) {
+        let index = context
+            .selected_path
+            .as_deref()
+            .and_then(|path| self.changes.iter().position(|change| change.path() == path))
+            .unwrap_or(0);
+        self.commit_detail_state.restore(
+            index,
+            self.changes.len(),
+            context.files_focused,
+            context.offset,
+        );
     }
 
     fn copy_commit_short_hash(&self) {
@@ -234,7 +295,14 @@ impl<'a> DetailView<'a> {
     pub fn refresh(&self) {
         let list_state = self.as_list_state();
         let list_context = ListRefreshViewContext::from(list_state);
-        let context = RefreshViewContext::Detail { list_context };
+        let context = RefreshViewContext::Detail {
+            list_context,
+            detail_context: crate::view::DetailRefreshViewContext {
+                selected_path: self.selected_file().map(|change| change.path().into()),
+                files_focused: self.commit_detail_state.files_focused(),
+                offset: self.commit_detail_state.offset(),
+            },
+        };
         self.tx.send(AppEvent::Refresh(context));
     }
 }

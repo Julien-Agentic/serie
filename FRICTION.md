@@ -15,8 +15,9 @@ These block replacing VS Code's Git Graph.
    explicitly force-deletes local branches, with confirmation. Remote deletion
    is a separate confirmed action, protected by a lease. Current and worktree-held
    branches are refused. Delta/Hunk review moved to `v` / `V`.
-3. **Selectable changed-file list.** Files in the commit detail view cannot be
-   selected or opened in the editor without a round trip through Hunk.
+3. **Selectable changed-file list.** *Fixed:* `Tab` focuses the changed-file list
+   in commit details; `j` / `k` selects and `e` edits the current working-tree file
+   using `$VISUAL` / `$EDITOR`, without a Hunk round trip.
 
 ## Nice to have
 
@@ -27,8 +28,8 @@ These block replacing VS Code's Git Graph.
   the commit list and detail view, preferring local branches and offering a
   digit picker when needed. `c` still copies the short SHA. In the refs list,
   both `c` and `C` copy the selected branch or tag name.
-- **Jump between branch tips.** *Fixed:* `{` and `}` move to the previous or
-  next local or remote branch tip in display order, with counts such as `3}`.
+- **Jump between branch tips.** *Fixed:* `[` and `]` move to the previous or
+  next local or remote branch tip in display order, with counts such as `3]`.
   Navigation does not wrap or switch branches.
 - **Automatic refresh.** `R` has to be pressed after every agent commit.
 - **Adjustable graph column width.** *Fixed:* `<` and `>` narrow and widen the
@@ -47,8 +48,11 @@ One feature at a time, in this order:
 1. **Branch picker and switching — implemented.** It supplies the branch list
    and selection UI that deletion reuses.
 2. **Branch deletion — implemented.**
-3. **Selectable changed-file list — next,** with open-in-editor. It is independent of
-   the branch work and can move earlier if it hurts more in daily use.
+3. **Selectable changed-file list — implemented,** with open-in-editor.
+
+All original must-fix items are implemented. Remaining follow-ups include automatic
+refresh, unified diff wrapping, and automatic graph narrowing at startup; see
+FEATURES.md.
 
 This replaces the earlier suggestion in FEATURES.md to prototype the worktree
 picker first. Branch switching is now worktree-aware: a branch checked out in

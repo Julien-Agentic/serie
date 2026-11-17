@@ -22,6 +22,7 @@ use crate::{
     graph::GraphImageManager,
     protocol::PreparedImage,
     search::{SearchOptions, SearchTarget},
+    widget::lineage::Lineage,
 };
 
 static FUZZY_MATCHER: Lazy<SkimMatcherV2> = Lazy::new(|| SkimMatcherV2::default().respect_case());
@@ -184,6 +185,12 @@ impl SearchMatcher {
 }
 
 #[derive(Debug)]
+pub struct LineageChoice {
+    pub target: usize,
+    pub label: String,
+}
+
+#[derive(Debug)]
 pub struct CommitListState<'a> {
     commits: Vec<CommitInfo<'a>>,
     commit_hash_set: FxHashSet<&'a CommitHash>,
@@ -192,6 +199,7 @@ pub struct CommitListState<'a> {
     head: &'a Head,
 
     ref_name_to_commit_index_map: FxHashMap<&'a str, usize>,
+    lineage: Lineage,
 
     search_state: SearchState,
     search_options: SearchOptions,
@@ -218,6 +226,29 @@ impl<'a> CommitListState<'a> {
     ) -> CommitListState<'a> {
         let total = commits.len();
         let commit_hash_set = commits.iter().map(|c| &c.commit.commit_hash).collect();
+        let index_by_hash: FxHashMap<_, _> = commits
+            .iter()
+            .enumerate()
+            .map(|(index, info)| (&info.commit.commit_hash, index))
+            .collect();
+        let parents = commits
+            .iter()
+            .map(|info| {
+                info.commit
+                    .parent_commit_hashes
+                    .first()
+                    .and_then(|parent| index_by_hash.get(parent).copied())
+            })
+            .collect();
+        let branch_tips = commits
+            .iter()
+            .map(|info| {
+                info.refs
+                    .iter()
+                    .any(|r| matches!(r, Ref::Branch { .. } | Ref::RemoteBranch { .. }))
+            })
+            .collect();
+        let lineage = Lineage::new(parents, branch_tips);
         CommitListState {
             commits,
             commit_hash_set,
@@ -225,6 +256,7 @@ impl<'a> CommitListState<'a> {
             graph_cell_width,
             head,
             ref_name_to_commit_index_map,
+            lineage,
             search_state: SearchState::Inactive,
             search_options,
             search_input: Input::default(),
@@ -345,6 +377,71 @@ impl<'a> CommitListState<'a> {
         if target != current {
             self.select_visible_index(target);
         }
+    }
+
+    pub fn select_lineage_root(&mut self) -> bool {
+        if self.total == 0 {
+            return false;
+        }
+        if let Some(target) = self.lineage.toward_root(self.current_selected_index()) {
+            self.select_visible_index(target);
+            return true;
+        }
+        false
+    }
+
+    pub fn lineage_choices(&self) -> (Vec<LineageChoice>, usize) {
+        if self.total == 0 {
+            return (vec![], 0);
+        }
+        let current = self.current_selected_index();
+        let targets = self.lineage.toward_tips(current);
+        let preferred = self.lineage.preferred_tip(current);
+        let selected = targets
+            .iter()
+            .position(|target| Some(*target) == preferred)
+            .unwrap_or(0);
+        let choices = targets
+            .into_iter()
+            .map(|target| {
+                let info = &self.commits[target];
+                let mut names: Vec<_> = info
+                    .refs
+                    .iter()
+                    .filter(|r| matches!(r, Ref::Branch { .. } | Ref::RemoteBranch { .. }))
+                    .map(|r| r.name())
+                    .collect();
+                names.sort_unstable();
+                names.dedup();
+                let label = if names.is_empty() {
+                    format!(
+                        "{} {}",
+                        info.commit.commit_hash.as_short_hash(),
+                        info.commit.subject
+                    )
+                } else {
+                    format!(
+                        "{} ({})",
+                        names.join(", "),
+                        info.commit.commit_hash.as_short_hash()
+                    )
+                };
+                LineageChoice { target, label }
+            })
+            .collect();
+        (choices, selected)
+    }
+
+    pub fn select_lineage_tip(&mut self, target: usize) -> bool {
+        if self.total == 0
+            || !self
+                .lineage
+                .choose_tip(self.current_selected_index(), target)
+        {
+            return false;
+        }
+        self.select_visible_index(target);
+        true
     }
 
     pub fn select_parent(&mut self) {

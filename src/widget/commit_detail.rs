@@ -18,9 +18,49 @@ use crate::{
 pub struct CommitDetailState {
     height: usize,
     offset: usize,
+    selected_file: Option<usize>,
+    files_focused: bool,
+    scroll_to_file: bool,
 }
 
 impl CommitDetailState {
+    pub fn new(file_count: usize) -> Self {
+        Self {
+            selected_file: (file_count > 0).then_some(0),
+            ..Self::default()
+        }
+    }
+
+    pub fn selected_file(&self) -> Option<usize> {
+        self.selected_file
+    }
+    pub fn files_focused(&self) -> bool {
+        self.files_focused
+    }
+    pub fn offset(&self) -> usize {
+        self.offset
+    }
+    pub fn height(&self) -> usize {
+        self.height
+    }
+
+    pub fn toggle_files(&mut self) {
+        self.files_focused = !self.files_focused;
+        self.scroll_to_file = self.files_focused;
+    }
+
+    pub fn select_file(&mut self, index: usize, file_count: usize) {
+        self.selected_file = (file_count > 0).then_some(index.min(file_count.saturating_sub(1)));
+        self.scroll_to_file = true;
+    }
+
+    pub fn restore(&mut self, index: usize, file_count: usize, focused: bool, offset: usize) {
+        self.select_file(index, file_count);
+        self.files_focused = focused;
+        self.offset = offset;
+        self.scroll_to_file = focused;
+    }
+
     pub fn scroll_down(&mut self) {
         self.offset = self.offset.saturating_add(1);
     }
@@ -86,7 +126,30 @@ impl StatefulWidget for CommitDetail<'_> {
 
         let (mut label_lines, mut value_lines) = self.contents(area);
 
-        let content_area_height = area.height as usize - 1; // minus the top border
+        let content_area_height = area.height.saturating_sub(1) as usize;
+        let file_start = value_lines.len().saturating_sub(self.changes.len());
+        if let Some(index) = state.selected_file {
+            if let Some(line) = value_lines.get_mut(file_start + index) {
+                let modifier = if state.files_focused {
+                    Modifier::REVERSED
+                } else {
+                    Modifier::BOLD
+                };
+                *line = line
+                    .clone()
+                    .patch_style(Style::default().add_modifier(modifier));
+            }
+            if (state.scroll_to_file || state.files_focused) && content_area_height > 0 {
+                let row = file_start + index;
+                if row < state.offset {
+                    state.offset = row;
+                }
+                if row >= state.offset.saturating_add(content_area_height) {
+                    state.offset = row + 1 - content_area_height;
+                }
+            }
+        }
+        state.scroll_to_file = false;
         self.update_state(state, value_lines.len(), content_area_height);
 
         label_lines = label_lines.into_iter().skip(state.offset).collect();
@@ -153,6 +216,11 @@ impl CommitDetail<'_> {
         value_lines.extend(self.commit_message_lines());
 
         value_lines.push(self.divider_line(area.width as usize));
+        value_lines.push(Line::raw(if self.changes.is_empty() {
+            "No changed files"
+        } else {
+            "Files (working tree) · Tab: focus · e: edit"
+        }));
         value_lines.extend(self.changes_lines());
 
         (label_lines, value_lines)
@@ -279,24 +347,24 @@ impl CommitDetail<'_> {
                 FileChange::Add { path } => Line::from(vec![
                     "A".fg(self.ctx.color_theme.detail_file_change_add_fg),
                     " ".into(),
-                    path.into(),
+                    file_label(path).into(),
                 ]),
                 FileChange::Modify { path } => Line::from(vec![
                     "M".fg(self.ctx.color_theme.detail_file_change_modify_fg),
                     " ".into(),
-                    path.into(),
+                    file_label(path).into(),
                 ]),
                 FileChange::Delete { path } => Line::from(vec![
                     "D".fg(self.ctx.color_theme.detail_file_change_delete_fg),
                     " ".into(),
-                    path.into(),
+                    file_label(path).into(),
                 ]),
                 FileChange::Move { from, to } => Line::from(vec![
                     "R".fg(self.ctx.color_theme.detail_file_change_move_fg),
                     " ".into(),
-                    from.into(),
+                    file_label(from).into(),
                     " -> ".into(),
-                    to.into(),
+                    file_label(to).into(),
                 ]),
             })
             .collect()
@@ -316,6 +384,18 @@ impl CommitDetail<'_> {
     }
 }
 
+fn file_label(path: &str) -> String {
+    path.chars()
+        .flat_map(|c| {
+            if c.is_control() {
+                c.escape_default().collect::<Vec<_>>()
+            } else {
+                vec![c]
+            }
+        })
+        .collect()
+}
+
 fn is_author_committer_different(commit: &Commit) -> bool {
     commit.author_name != commit.committer_name
         || commit.author_email != commit.committer_email
@@ -333,4 +413,67 @@ fn has_refs(refs: &[Ref]) -> bool {
             Ref::Branch { .. } | Ref::RemoteBranch { .. } | Ref::Tag { .. }
         )
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        config::{CoreConfig, UiConfig},
+        keybind::KeyBind,
+        protocol::ImageProtocol,
+    };
+
+    #[test]
+    fn test_selected_file_stays_visible_after_navigation_and_resize() {
+        let ctx = Rc::new(AppContext {
+            keybind: KeyBind::new(None),
+            core_config: CoreConfig::default(),
+            ui_config: UiConfig::default(),
+            color_theme: crate::color::ColorTheme::default(),
+            image_protocol: ImageProtocol::Iterm2,
+        });
+        let commit = Commit {
+            subject: "subject".into(),
+            body: "body\n".repeat(30),
+            ..Commit::default()
+        };
+        let changes = (0..30)
+            .map(|i| FileChange::Add {
+                path: format!("file-{i:02}.txt"),
+            })
+            .collect();
+        let refs = Vec::new();
+        let mut state = CommitDetailState::new(30);
+        state.toggle_files();
+        state.select_file(29, 30);
+        for (width, height) in [(80, 12), (30, 3), (1, 1), (0, 0), (80, 8)] {
+            let area = Rect::new(0, 0, width, height);
+            let mut buffer = Buffer::empty(area);
+            CommitDetail::new(&commit, &changes, &refs, ctx.clone()).render(
+                area,
+                &mut buffer,
+                &mut state,
+            );
+            if width >= 30 && height >= 3 {
+                let text = buffer
+                    .content
+                    .iter()
+                    .map(|c| c.symbol())
+                    .collect::<String>();
+                assert!(text.contains("file-29.txt"), "{text}");
+                assert!(buffer
+                    .content
+                    .iter()
+                    .any(|cell| cell.modifier.contains(Modifier::REVERSED)));
+            }
+        }
+        state.select_file(0, 30);
+        assert_eq!(state.selected_file(), Some(0));
+        state.select_file(usize::MAX, 30);
+        assert_eq!(state.selected_file(), Some(29));
+        state.select_file(0, 0);
+        assert_eq!(state.selected_file(), None);
+        assert_eq!(file_label("file\twith\ncontrols"), "file\\twith\\ncontrols");
+    }
 }

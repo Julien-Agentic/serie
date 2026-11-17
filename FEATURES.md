@@ -91,6 +91,16 @@ restart to pick up the editor change.
 
 ## Proposed additions to the fork
 
+### Faster interactive-tool handoff — Implemented
+
+- Read terminal input on the application thread, so opening Hunk (`V`) or an
+  editor (`e`) no longer waits up to 100 ms for a background input thread to stop.
+- Launch user commands from cached commit metadata without first computing an
+  unused changed-file summary through Git.
+- A local release-build terminal probe measured median key-to-command handoff
+  dropping from about 106 ms to 5 ms. This excludes Hunk's own startup and diff
+  loading, which remain dependent on the tool and repository.
+
 ### Branch picker and switching — Implemented
 
 On the `branch-switching` branch. The primary control follows LazyGit: put the
@@ -143,12 +153,14 @@ panel.
 
 ### Keybind to jump to previous/next branch — Implemented
 
-- `{` jumps upward to the previous branch tip; `}` jumps downward to the next.
+- `[` jumps upward to the previous branch tip; `]` jumps downward to the next.
 - Follow displayed history order, including local and remote branches but not
   tags or stashes. Several branches on one commit are one stop.
 - Skip the current commit and stop at either end without wrapping.
-- Support counts, such as `3}`. Only selection changes; `Space` still switches
-  branches. Braces remain ordinary text while typing a search.
+- Support counts, such as `3]`. Only selection changes; `Space` still switches
+  branches. Brackets remain ordinary text while typing a search.
+- `{` / `}` instead navigate first-parent lineage toward tips / the root,
+  with a path chooser at forks.
 
 ### Branch deletion — Implemented
 
@@ -188,15 +200,25 @@ panel.
   `c` / `C` copies the selected directory. `w`, `Esc`, or `Backspace` closes
   the picker without changing context.
 
-### Selectable changed-file list inside Serie — Proposed
+### Selectable changed-file list inside Serie — Implemented
 
-- Make files in the commit detail view individually selectable.
-- Add a direct open-in-editor action, potentially bound to `e`.
-- Use the configured editor without requiring a round trip through Hunk.
-- Clearly distinguish opening a working-tree file from viewing historical content.
-
-Stock Serie currently shows a changed-file summary, but has neither a selectable
-file list nor a built-in open-file shortcut.
+- In commit details, `Tab` toggles focus between text scrolling and changed files.
+  With files focused, arrows / `j` / `k` select a file; counts, page/half-page
+  movement, and `g` / `G` work without wrapping. Selection stays visible on resize.
+- `e` opens the selected file in `$VISUAL`, then `$EDITOR`, falling back to `vi`.
+  Editor arguments/quoting are supported; filenames are passed as literal arguments.
+  Serie suspends and resumes around the editor, retaining the detail view.
+- Open the **current working-tree version**, never historical content. Renames
+  use the destination path. Missing/deleted files are not recreated. Directories,
+  submodules, and symlinks resolving outside the worktree are refused.
+- Always resolve paths relative to the selected worktree root, including when
+  launched from a subdirectory. Spaces, tabs, and newlines in Git filenames are
+  preserved; control characters are escaped only for display.
+- `R` preserves the selected file by path, focus and scroll position. Changing
+  commits with `J` / `K` or parent navigation resets selection to the first file.
+- `Tab` again restores text scrolling; `Enter`, `Esc`, and `Backspace` still close
+  details. `e` also works in text mode on the retained selection (first file by
+  default). No Hunk round trip is needed.
 
 ### Adjustable graph column width — Implemented
 

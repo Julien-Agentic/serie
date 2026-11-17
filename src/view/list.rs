@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod lineage_tests;
+
 use std::rc::Rc;
 
 use ratatui::{crossterm::event::KeyEvent, layout::Rect, Frame};
@@ -7,12 +10,19 @@ use crate::{
     event::{AppEvent, Sender, UserEvent, UserEventWithCount},
     git::CommitHash,
     view::{ListRefreshViewContext, RefreshViewContext},
-    widget::commit_list::{CommitList, CommitListState, SearchState},
+    widget::commit_list::{CommitList, CommitListState, LineageChoice, SearchState},
 };
+
+#[derive(Debug)]
+struct LineagePicker {
+    choices: Vec<LineageChoice>,
+    selected: usize,
+}
 
 #[derive(Debug)]
 pub struct ListView<'a> {
     commit_list_state: Option<CommitListState<'a>>,
+    lineage_picker: Option<LineagePicker>,
 
     ctx: Rc<AppContext>,
     tx: Sender,
@@ -26,6 +36,7 @@ impl<'a> ListView<'a> {
     ) -> ListView<'a> {
         ListView {
             commit_list_state: Some(commit_list_state),
+            lineage_picker: None,
             ctx,
             tx,
         }
@@ -34,6 +45,10 @@ impl<'a> ListView<'a> {
     pub fn handle_event(&mut self, event_with_count: UserEventWithCount, key: KeyEvent) {
         let event = event_with_count.event;
         let count = event_with_count.count;
+        if self.lineage_picker.is_some() {
+            self.handle_lineage_picker(event);
+            return;
+        }
         if let SearchState::Searching { .. } = self.as_list_state().search_state() {
             match event {
                 UserEvent::Confirm => {
@@ -80,6 +95,16 @@ impl<'a> ListView<'a> {
                 UserEvent::GoToNextBranch | UserEvent::GoToPreviousBranch => {
                     self.as_mut_list_state()
                         .select_branch_tip(event == UserEvent::GoToNextBranch, count);
+                }
+                UserEvent::LineageRoot => {
+                    if !self.as_mut_list_state().select_lineage_root() {
+                        self.tx.send(AppEvent::UpdateStatusTransient(
+                            "End of loaded first-parent ancestry".into(),
+                        ));
+                    }
+                }
+                UserEvent::LineageTip => {
+                    self.open_lineage_picker();
                 }
                 UserEvent::GoToParent => {
                     for _ in 0..count {
@@ -257,6 +282,73 @@ impl<'a> ListView<'a> {
 
     pub fn graph_image_ids_sorted(&self) -> Vec<u32> {
         self.as_list_state().graph_image_ids_sorted()
+    }
+
+    fn open_lineage_picker(&mut self) {
+        let (mut choices, selected) = self.as_list_state().lineage_choices();
+        match choices.len() {
+            0 => self.tx.send(AppEvent::UpdateStatusTransient(
+                "No loaded first-parent descendants".into(),
+            )),
+            1 => {
+                self.as_mut_list_state()
+                    .select_lineage_tip(choices.remove(0).target);
+            }
+            _ => {
+                self.lineage_picker = Some(LineagePicker { choices, selected });
+                self.update_lineage_picker_status();
+            }
+        }
+    }
+
+    fn handle_lineage_picker(&mut self, event: UserEvent) {
+        let mut picker = self.lineage_picker.take().expect("lineage picker is open");
+        match event {
+            UserEvent::Confirm => {
+                self.as_mut_list_state()
+                    .select_lineage_tip(picker.choices[picker.selected].target);
+                self.tx.send(AppEvent::ClearStatusLine);
+                return;
+            }
+            UserEvent::Cancel | UserEvent::Close | UserEvent::LineageRoot => {
+                self.tx.send(AppEvent::ClearStatusLine);
+                return;
+            }
+            UserEvent::Quit => {
+                self.tx.send(AppEvent::Quit);
+                return;
+            }
+            UserEvent::NavigateDown | UserEvent::SelectDown | UserEvent::LineageTip => {
+                picker.selected = (picker.selected + 1) % picker.choices.len();
+            }
+            UserEvent::NavigateUp | UserEvent::SelectUp => {
+                picker.selected =
+                    (picker.selected + picker.choices.len() - 1) % picker.choices.len();
+            }
+            UserEvent::GoToTop => picker.selected = 0,
+            UserEvent::GoToBottom => picker.selected = picker.choices.len() - 1,
+            _ => {}
+        }
+        self.lineage_picker = Some(picker);
+        self.update_lineage_picker_status();
+    }
+
+    fn update_lineage_picker_status(&self) {
+        let picker = self
+            .lineage_picker
+            .as_ref()
+            .expect("lineage picker is open");
+        let message = format!(
+            "Continue toward [{}/{}]: {}",
+            picker.selected + 1,
+            picker.choices.len(),
+            picker.choices[picker.selected].label
+        );
+        self.tx.send(AppEvent::UpdateStatusInput {
+            cursor_byte_index: message.len(),
+            message,
+            metadata: "j/k: choose · Enter: follow · Esc: cancel".into(),
+        });
     }
 
     fn update_search_status(&self) {
