@@ -48,6 +48,12 @@ snapshots. Interactive terminal behavior still needs manual testing: graph
 rendering, navigation, resizing, worktree context switching, and returning from
 an editor or Hunk. Do not commit generated `target/` or `out/` contents.
 
+The regular Build workflow runs Linux checks. For hosted Apple Silicon coverage,
+run **Actions → Build Apple Silicon → Run workflow** and select the branch to
+check. This workflow runs on demand so macOS runner availability does not block
+regular CI. On an Apple Silicon machine, the equivalent build check is
+`cargo build --locked --target aarch64-apple-darwin`.
+
 Changes to commands, defaults, and keybindings should update application docs,
 `assets/default-keybind.toml`, `config.schema.json`, and tests as applicable.
 Update `fork/config.example.toml` when our optional external-tool setup changes.

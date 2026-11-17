@@ -1,0 +1,24 @@
+name: Build Apple Silicon
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+      - name: Setup
+        run: rustup target add aarch64-apple-darwin
+      - name: Build
+        uses: houseabsolute/actions-rust-cross@v1.0.8
+        with:
+          command: build
+          target: aarch64-apple-darwin
