@@ -1581,12 +1581,15 @@ detached
         );
         git(path, &["remote", "add", "origin", "prompt-host:repo.git"]);
         // Stands in for SSH: record whether a passphrase prompt could reach a terminal.
+        // Isolate `:` in a subshell: dash exits on a special builtin's redirection
+        // failure, even inside `if`. The parent must still record no-tty and the
+        // prompt setting. Redirect stderr outside the subshell to silence that failure.
         let probe = path.join("tty-probe");
         let ssh = path.join("fake-ssh");
         fs::write(
             &ssh,
             format!(
-                "#!/bin/sh\nif : </dev/tty 2>/dev/null; then echo tty; else echo no-tty; fi > '{}'\necho \"$GIT_TERMINAL_PROMPT\" >> '{}'\nexit 1\n",
+                "#!/bin/sh\nif ( : </dev/tty ) 2>/dev/null; then echo tty; else echo no-tty; fi > '{}'\necho \"$GIT_TERMINAL_PROMPT\" >> '{}'\nexit 1\n",
                 probe.display(),
                 probe.display()
             ),
