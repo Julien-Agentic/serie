@@ -24,6 +24,10 @@ These block replacing VS Code's Git Graph.
 - **Worktree picker.** *Fixed:* `w` opens a right-hand worktree panel;
   `Enter` / `Space` changes Serie's context without checking out a branch.
   Repository reads and external commands follow the selected worktree.
+- **Explicit worktree names.** Show the worktree name prominently in the pane
+  so users don't have to infer it from a file path.
+- **Pull keybinding.** Pull upstream changes into the active worktree's
+  checked-out branch without leaving Serie.
 - **Copy branch name from a commit.** *Fixed:* `C` copies a branch name in
   the commit list and detail view, preferring local branches and offering a
   digit picker when needed. `c` still copies the short SHA. In the refs list,
@@ -52,7 +56,8 @@ One feature at a time, in this order:
 3. **Selectable changed-file list — implemented,** with open-in-editor.
 
 All original must-fix items are implemented. Remaining follow-ups include
-unified diff wrapping and automatic graph narrowing at startup; see FEATURES.md.
+explicit worktree names, a pull keybinding, unified diff wrapping, and automatic
+graph narrowing at startup; see [FEATURES.md](FEATURES.md).
 
 This replaces the earlier suggestion in FEATURES.md to prototype the worktree
 picker first. Branch switching is now worktree-aware: a branch checked out in
