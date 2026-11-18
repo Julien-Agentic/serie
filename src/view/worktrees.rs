@@ -130,12 +130,25 @@ impl<'a> WorktreesView<'a> {
                 } else {
                     "  "
                 };
+                let name = worktree
+                    .path
+                    .file_name()
+                    .unwrap_or(worktree.path.as_os_str())
+                    .to_string_lossy();
+                let checkout = match &worktree.branch {
+                    Some(branch) => format!("Branch: {branch}"),
+                    None => "Detached HEAD".into(),
+                };
                 ListItem::new(vec![
+                    Line::styled(
+                        format!("{marker}{}", display_path(&name)),
+                        Style::default().add_modifier(Modifier::BOLD),
+                    ),
+                    Line::raw(format!("  {checkout}")),
                     Line::raw(format!(
-                        "{marker}{}",
-                        worktree.branch.as_deref().unwrap_or("(detached HEAD)")
+                        "  {}",
+                        display_path(&worktree.path.to_string_lossy())
                     )),
-                    Line::raw(format!("  {}", worktree.path.display())),
                 ])
             })
             .collect();
@@ -200,4 +213,16 @@ impl<'a> WorktreesView<'a> {
     pub fn refresh(&self) {
         self.tx.send(AppEvent::Refresh(self.refresh_context()));
     }
+}
+
+fn display_path(path: &str) -> String {
+    let mut text = String::new();
+    for ch in path.chars() {
+        if ch.is_control() {
+            text.extend(ch.escape_default());
+        } else {
+            text.push(ch);
+        }
+    }
+    text
 }
