@@ -635,6 +635,15 @@ impl<'a> CommitListState<'a> {
         self.selected = index - self.offset;
     }
 
+    pub fn restore_commit_position(&mut self, hash: &CommitHash, fallback: usize, row: usize) {
+        if self.commit_hash_set.contains(hash) {
+            self.select_commit_hash(hash);
+        } else {
+            self.select_index(fallback.min(self.total.saturating_sub(1)));
+        }
+        self.restore_selected_row(row);
+    }
+
     pub fn select_ref(&mut self, ref_name: &str) {
         if let Some(&index) = self.ref_name_to_commit_index_map.get(ref_name) {
             self.select_index(index);

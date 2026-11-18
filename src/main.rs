@@ -1,4 +1,5 @@
 mod app;
+mod auto_refresh;
 mod check;
 mod color;
 mod config;
@@ -19,7 +20,7 @@ mod mailmap_tests;
 #[cfg(test)]
 mod test_support;
 
-use std::{path::Path, rc::Rc};
+use std::{path::Path, rc::Rc, time::Duration};
 
 use clap::{Parser, ValueEnum};
 use serde::Deserialize;
@@ -176,7 +177,7 @@ fn main() -> Result<()> {
     let max_count = args.max_count;
     let image_protocol = args.protocol.or(core_config.option.protocol).into();
     let order = args.order.or(core_config.option.order).into();
-    let graph_width = args.graph_width.or(core_config.option.graph_width);
+    let requested_graph_width = args.graph_width.or(core_config.option.graph_width);
     let graph_style = args.graph_style.or(core_config.option.graph_style).into();
     let graph_antialias = args.resolve_graph_antialias(core_config.option.graph_antialias);
     let graph_image_width_mode = graph_config.row_image_width;
@@ -197,6 +198,19 @@ fn main() -> Result<()> {
         image_protocol,
     });
 
+    let mut monitor = if ctx.core_config.option.auto_refresh {
+        let seconds = ctx
+            .core_config
+            .option
+            .auto_refresh_interval_secs
+            .map_or(10, |interval| u64::from(interval.get()));
+        Some(auto_refresh::RefMonitor::new(
+            std::env::current_dir()?,
+            Duration::from_secs(seconds),
+        ))
+    } else {
+        None
+    };
     let ec = event::EventController::init();
     let mut refresh_view_context = None;
     let mut refresh_message: Option<String> = None;
@@ -207,6 +221,19 @@ fn main() -> Result<()> {
     let saved_graph_lanes = git::saved_graph_lanes(Path::new("."));
     let mut terminal = None;
     let mut pending_repository = None;
+    let resolve_graph_width = |graph: &graph::Graph, chosen: Option<graph::GraphWidth>| {
+        let width = match chosen {
+            Some(width) => width,
+            None => graph::GraphWidth {
+                max_lanes: saved_graph_lanes,
+                ..graph::GraphWidth::new(check::decide_cell_width_type(
+                    graph,
+                    requested_graph_width,
+                )?)
+            },
+        };
+        check::fit_graph_width(graph, width)
+    };
 
     let ret: Result<()> = (|| loop {
         let repository = match pending_repository.take() {
@@ -218,18 +245,13 @@ fn main() -> Result<()> {
 
         // Changing the graph column width redraws the graph without reloading the repository.
         loop {
-            let graph_width = match chosen_graph_width {
-                Some(chosen) => check::fit_graph_width(&graph, chosen)?,
-                None => {
-                    let cell_width_type = check::decide_cell_width_type(&graph, graph_width)?;
-                    let width = graph::GraphWidth {
-                        max_lanes: saved_graph_lanes,
-                        ..graph::GraphWidth::new(cell_width_type)
-                    };
-                    chosen_graph_width = saved_graph_lanes.map(|_| width);
-                    check::fit_graph_width(&graph, width)?
-                }
-            };
+            let graph_width = resolve_graph_width(&graph, chosen_graph_width)?;
+            if chosen_graph_width.is_none() && saved_graph_lanes.is_some() {
+                chosen_graph_width = Some(graph::GraphWidth {
+                    max_lanes: saved_graph_lanes,
+                    ..graph_width
+                });
+            }
 
             let graph_image_manager = GraphImageManager::new(
                 &graph,
@@ -262,11 +284,16 @@ fn main() -> Result<()> {
                 app.warn_notification(warning);
             }
 
-            match app.run(terminal.as_mut().unwrap(), refresh_view_context)? {
+            match app.run(
+                terminal.as_mut().unwrap(),
+                refresh_view_context,
+                monitor.as_mut(),
+            )? {
                 Ret::Quit => {
                     return Ok(());
                 }
                 Ret::OpenWorktree { path, context } => {
+                    let baseline = monitor.as_ref().and_then(|_| git::RefSnapshot::read(&path));
                     // Validate before changing cwd. On failure the old graph and panel survive.
                     let result: Result<git::Repository> = (|| {
                         let repository = git::Repository::load(&path, order, max_count, mailmap)?;
@@ -277,6 +304,10 @@ fn main() -> Result<()> {
                     })();
                     match result {
                         Ok(repository) => {
+                            if let Some(monitor) = monitor.as_mut() {
+                                // Worktree paths from Git are absolute.
+                                monitor.reset(path.clone(), baseline);
+                            }
                             pending_repository = Some(repository);
                             refresh_view_context = None;
                             initial_selection = app::InitialSelection::Head;
@@ -287,6 +318,33 @@ fn main() -> Result<()> {
                             refresh_view_context = Some(context);
                             refresh_warning =
                                 Some(format!("Cannot open worktree {}: {error}", path.display()));
+                        }
+                    }
+                }
+                Ret::AutoRefresh(snapshot, context) => {
+                    refresh_view_context = Some(context);
+                    // Do not replace a usable graph with a failed background reload.
+                    let result: Result<git::Repository> = (|| {
+                        let repository = git::Repository::load(
+                            &std::env::current_dir()?,
+                            order,
+                            max_count,
+                            mailmap,
+                        )?;
+                        let graph = graph::calc_graph(&repository, primary_branch.as_deref());
+                        resolve_graph_width(&graph, chosen_graph_width)?;
+                        Ok(repository)
+                    })();
+                    match result {
+                        Ok(repository) => {
+                            if let Some(monitor) = monitor.as_mut() {
+                                monitor.refreshed(snapshot);
+                            }
+                            pending_repository = Some(repository);
+                            break;
+                        }
+                        Err(error) => {
+                            refresh_warning = Some(format!("Automatic refresh failed: {error}"));
                         }
                     }
                 }
@@ -301,7 +359,12 @@ fn main() -> Result<()> {
                                 refresh_warning = Some(format!("Graph width not saved: {err}"));
                             }
                         }
-                        None => break,
+                        None => {
+                            if let Some(monitor) = monitor.as_mut() {
+                                monitor.rebaseline();
+                            }
+                            break;
+                        }
                     }
                 }
             }

@@ -245,12 +245,13 @@ launch.
 - Preserve the unified diff layout for users who prefer it over side-by-side.
 - Keep scrolling correct when one logical line occupies multiple screen rows.
 
-### Automatic refresh for agent activity — Proposed
+### Automatic refresh for agent activity — Implemented
 
-- Detect externally created commits and reference changes.
-- Update the graph without repeatedly pressing `R`.
-- Preserve the selected commit and browsing position where possible, rather than
-  jumping around as agents work.
+- Enable with `[core.option]` and `auto_refresh = true`. Checks Git's HEAD and
+  refs every 10 seconds by default; set `auto_refresh_interval_secs = 5` for
+  faster updates. `R` remains available for immediate refresh.
+- Reload only when a snapshot changes. Preserve the selected commit and its
+  screen row where possible, and defer while a prompt or inline command is open.
 
 ### Safe behavior around active agents — Proposed
 

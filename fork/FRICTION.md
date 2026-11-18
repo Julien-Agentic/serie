@@ -31,7 +31,8 @@ These block replacing VS Code's Git Graph.
 - **Jump between branch tips.** *Fixed:* `[` and `]` move to the previous or
   next local or remote branch tip in display order, with counts such as `3]`.
   Navigation does not wrap or switch branches.
-- **Automatic refresh.** `R` has to be pressed after every agent commit.
+- **Automatic refresh.** *Fixed:* opt in to periodic Git ref checks without
+  pressing `R` after every agent commit.
 - **Adjustable graph column width.** *Fixed:* `<` and `>` narrow and widen the
   graph column.
 - **Unified diff wrapping.** Long lines are clipped in the inline diff pane;
@@ -50,9 +51,8 @@ One feature at a time, in this order:
 2. **Branch deletion — implemented.**
 3. **Selectable changed-file list — implemented,** with open-in-editor.
 
-All original must-fix items are implemented. Remaining follow-ups include automatic
-refresh, unified diff wrapping, and automatic graph narrowing at startup; see
-FEATURES.md.
+All original must-fix items are implemented. Remaining follow-ups include
+unified diff wrapping and automatic graph narrowing at startup; see FEATURES.md.
 
 This replaces the earlier suggestion in FEATURES.md to prototype the worktree
 picker first. Branch switching is now worktree-aware: a branch checked out in

@@ -1,5 +1,6 @@
 use std::{
     env,
+    num::NonZeroU32,
     path::{Path, PathBuf},
 };
 
@@ -132,6 +133,8 @@ pub struct CoreOptionConfig {
     pub graph_style: Option<GraphStyle>,
     pub graph_antialias: Option<bool>,
     pub initial_selection: Option<InitialSelection>,
+    pub auto_refresh: bool,
+    pub auto_refresh_interval_secs: Option<NonZeroU32>,
 }
 
 #[optional(derives = [Deserialize])]
@@ -452,6 +455,12 @@ mod tests {
     }
 
     #[test]
+    fn test_auto_refresh_interval_must_be_positive() {
+        let config = "[core.option]\nauto_refresh = true\nauto_refresh_interval_secs = 0";
+        assert!(toml::from_str::<OptionalConfig>(config).is_err());
+    }
+
+    #[test]
     fn test_config_default() {
         let actual = Config::default();
         let expected = Config {
@@ -463,6 +472,8 @@ mod tests {
                     graph_style: None,
                     graph_antialias: None,
                     initial_selection: None,
+                    auto_refresh: false,
+                    auto_refresh_interval_secs: None,
                 },
                 git: CoreGitConfig { mailmap: false },
                 search: CoreSearchConfig {
@@ -552,6 +563,8 @@ mod tests {
             graph_style = "angular"
             graph_antialias = true
             initial_selection = "head"
+            auto_refresh = true
+            auto_refresh_interval_secs = 5
             [core.git]
             mailmap = true
             [core.search]
@@ -599,6 +612,8 @@ mod tests {
                     graph_style: Some(GraphStyle::Angular),
                     graph_antialias: Some(true),
                     initial_selection: Some(InitialSelection::Head),
+                    auto_refresh: true,
+                    auto_refresh_interval_secs: NonZeroU32::new(5),
                 },
                 git: CoreGitConfig { mailmap: true },
                 search: CoreSearchConfig {
@@ -714,6 +729,8 @@ mod tests {
                     graph_style: None,
                     graph_antialias: None,
                     initial_selection: None,
+                    auto_refresh: false,
+                    auto_refresh_interval_secs: None,
                 },
                 git: CoreGitConfig { mailmap: false },
                 search: CoreSearchConfig {

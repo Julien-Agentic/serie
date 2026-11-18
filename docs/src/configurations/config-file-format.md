@@ -10,6 +10,8 @@ graph_width = "auto"
 graph_style = "rounded"
 graph_antialias = false
 initial_selection = "latest"
+auto_refresh = false
+auto_refresh_interval_secs = 10
 
 [core.git]
 mailmap = false
@@ -185,6 +187,24 @@ The initial selection of commit when starting the application.
   - `head`
 
 The value specified in the command line argument takes precedence.
+
+### `core.option.auto_refresh`
+
+Automatically refresh the graph when Git's HEAD or refs change. This detects
+commits on branches in other worktrees without scanning uncommitted files. It
+preserves the selected commit where possible and waits until prompts and inline
+command views are closed. `R` still refreshes immediately.
+
+- type: `boolean`
+- default: `false`
+
+### `core.option.auto_refresh_interval_secs`
+
+Interval between Git ref checks when automatic refresh is enabled. A check
+does not reload the graph unless there is a change.
+
+- type: positive integer (seconds)
+- default: `10`
 
 ### `core.git.mailmap`
 

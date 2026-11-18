@@ -54,6 +54,7 @@ pub enum AppEvent {
         value: String,
     },
     Refresh(RefreshViewContext),
+    AutoRefresh(crate::git::RefSnapshot, RefreshViewContext),
     ClearStatusLine,
     UpdateStatusInput {
         message: String,
@@ -172,11 +173,22 @@ impl EventController {
         self.tx.send(event);
     }
 
+    #[cfg(test)]
     pub fn recv(&self) -> AppEvent {
+        self.recv_with_background(|| None)
+    }
+
+    pub fn recv_with_background(
+        &self,
+        mut background: impl FnMut() -> Option<AppEvent>,
+    ) -> AppEvent {
         if !self.read_input {
             return self.rx.recv();
         }
         self.recv_with(|| {
+            if let Some(event) = background() {
+                return Some(event);
+            }
             if !ratatui::crossterm::event::poll(std::time::Duration::from_millis(100))
                 .expect("Failed to poll event")
             {

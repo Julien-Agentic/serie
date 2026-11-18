@@ -188,6 +188,20 @@ impl<'a> View<'a> {
         View::Help(Box::new(HelpView::new(before, ctx, tx)))
     }
 
+    pub fn auto_refresh_context(&self) -> Option<RefreshViewContext> {
+        let mut context = match self {
+            View::List(view) => view.refresh_context(),
+            View::Detail(view) => view.refresh_context(),
+            View::Refs(view) => view.refresh_context(),
+            View::Worktrees(view) => view.refresh_context(),
+            // Restoring a command view reruns the command. Wait until it closes.
+            View::Default | View::Help(_) | View::UserCommand(_) => return None,
+        };
+        let list_context = context.list_context_mut();
+        list_context.scroll_to_top = false;
+        Some(context)
+    }
+
     pub fn refresh(&mut self) {
         match self {
             View::Default => {}
@@ -225,6 +239,16 @@ pub enum RefreshViewContext {
 }
 
 impl RefreshViewContext {
+    fn list_context_mut(&mut self) -> &mut ListRefreshViewContext {
+        match self {
+            Self::List { list_context }
+            | Self::Detail { list_context, .. }
+            | Self::UserCommand { list_context, .. }
+            | Self::Refs { list_context, .. }
+            | Self::Worktrees { list_context, .. } => list_context,
+        }
+    }
+
     pub fn list_context(&self) -> &ListRefreshViewContext {
         match self {
             RefreshViewContext::List { list_context }
@@ -243,6 +267,7 @@ pub struct ListRefreshViewContext {
     pub selected: usize,
     pub height: usize,
     pub scroll_to_top: bool,
+    pub index: usize,
     pub search_options: SearchOptions,
     pub search_context: Option<SearchRefreshContext>,
 }
@@ -262,6 +287,7 @@ impl From<&CommitListState<'_>> for ListRefreshViewContext {
             selected,
             height,
             scroll_to_top,
+            index: offset + selected,
             search_options,
             search_context,
         }

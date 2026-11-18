@@ -292,17 +292,20 @@ impl<'a> DetailView<'a> {
         self.tx.send(AppEvent::CopyToClipboard { name, value });
     }
 
-    pub fn refresh(&self) {
+    pub fn refresh_context(&self) -> RefreshViewContext {
         let list_state = self.as_list_state();
         let list_context = ListRefreshViewContext::from(list_state);
-        let context = RefreshViewContext::Detail {
+        RefreshViewContext::Detail {
             list_context,
             detail_context: crate::view::DetailRefreshViewContext {
                 selected_path: self.selected_file().map(|change| change.path().into()),
                 files_focused: self.commit_detail_state.files_focused(),
                 offset: self.commit_detail_state.offset(),
             },
-        };
-        self.tx.send(AppEvent::Refresh(context));
+        }
+    }
+
+    pub fn refresh(&self) {
+        self.tx.send(AppEvent::Refresh(self.refresh_context()));
     }
 }

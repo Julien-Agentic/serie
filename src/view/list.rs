@@ -408,11 +408,14 @@ impl<'a> ListView<'a> {
         self.tx.send(AppEvent::CopyToClipboard { name, value });
     }
 
+    pub fn refresh_context(&self) -> RefreshViewContext {
+        RefreshViewContext::List {
+            list_context: ListRefreshViewContext::from(self.as_list_state()),
+        }
+    }
+
     pub fn refresh(&self) {
-        let list_state = self.as_list_state();
-        let list_context = ListRefreshViewContext::from(list_state);
-        let context = RefreshViewContext::List { list_context };
-        self.tx.send(AppEvent::Refresh(context));
+        self.tx.send(AppEvent::Refresh(self.refresh_context()));
     }
 
     pub fn reset_commit_list_with(&mut self, list_context: &ListRefreshViewContext) {
@@ -422,6 +425,7 @@ impl<'a> ListView<'a> {
             selected,
             height,
             scroll_to_top,
+            index,
             search_options,
             search_context,
         } = list_context;
@@ -432,8 +436,11 @@ impl<'a> ListView<'a> {
         if *scroll_to_top {
             list_state.select_first();
         } else {
-            list_state.select_commit_hash(&CommitHash::from(commit_hash.as_str()));
-            list_state.restore_selected_row(*selected);
+            list_state.restore_commit_position(
+                &CommitHash::from(commit_hash.as_str()),
+                *index,
+                *selected,
+            );
         }
         if let Some(search_context) = search_context {
             list_state.restore_search(search_context);
