@@ -144,8 +144,10 @@ down as before.
 ### Worktree picker
 
 Press <kbd>w</kbd> from the commit list or refs panel to list worktrees in a
-right-hand panel. Each entry shows its branch (or detached HEAD) and directory;
-`*` marks the current worktree. Bare repositories are not selectable.
+right-hand panel. Each entry shows the worktree's directory name first, followed
+by its branch (or detached HEAD) and full path. `*` marks the current worktree.
+If the path is clipped, <kbd>c</kbd> or <kbd>C</kbd> copies it in full.
+Bare repositories are not selectable.
 
 | Key | Description | Corresponding keybind |
 | --- | --- | --- |

@@ -1853,6 +1853,76 @@ mod tests {
     }
 
     #[test]
+    fn test_worktree_panel_displays_name_checkout_and_path_separately() {
+        let other = tempfile::tempdir().unwrap();
+        let attached = other.path().join("agent-worktree");
+        let detached = other.path().join("detached-worktree");
+        with_deletion_app_setup(
+            |root| {
+                git_stdout(
+                    root,
+                    &["worktree", "add", attached.to_str().unwrap(), "topic"],
+                );
+                git_stdout(
+                    root,
+                    &[
+                        "worktree",
+                        "add",
+                        "--detach",
+                        detached.to_str().unwrap(),
+                        "HEAD",
+                    ],
+                );
+            },
+            |app| {
+                app.open_worktrees();
+                let area = Rect::new(0, 0, 120, 20);
+                let mut terminal =
+                    Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+                app.view.update_layout(area);
+                app.view.prepare_graph_uploads();
+                terminal
+                    .draw(|frame| app.view.render(frame, frame.area()))
+                    .unwrap();
+                let buffer = terminal.backend().buffer();
+                let rows: Vec<String> = (0..area.height)
+                    .map(|y| (0..area.width).map(|x| buffer[(x, y)].symbol()).collect())
+                    .collect();
+                let attached_row = rows
+                    .iter()
+                    .position(|row| row.trim_end().ends_with("agent-worktree"))
+                    .unwrap();
+                assert!(rows[attached_row + 1].contains("Branch: topic"));
+                let path = std::fs::canonicalize(&attached).unwrap();
+                let visible_path: String = path
+                    .to_string_lossy()
+                    .chars()
+                    .take(usize::from(app.ctx.ui_config.refs.width) - 5)
+                    .collect();
+                assert!(rows[attached_row + 2].trim_end().ends_with(&visible_path));
+                let detached_row = rows
+                    .iter()
+                    .position(|row| row.trim_end().ends_with("detached-worktree"))
+                    .unwrap();
+                assert!(rows[detached_row + 1].contains("Detached HEAD"));
+
+                let View::Worktrees(view) = &mut app.view else {
+                    panic!("expected worktree picker");
+                };
+                view.select_path(&path);
+                view.handle_event(
+                    UserEventWithCount::from_event(UserEvent::ShortCopy),
+                    KeyEvent::from(KeyCode::Char('c')),
+                );
+                assert!(matches!(
+                    app.ec.recv(),
+                    AppEvent::CopyToClipboard { value, .. } if value == path.to_string_lossy()
+                ));
+            },
+        );
+    }
+
+    #[test]
     fn test_worktree_panel_renders_in_narrow_and_empty_areas() {
         with_deletion_app(|app| {
             app.open_worktrees();

@@ -186,8 +186,9 @@ panel.
 
 - `w` opens a right-hand worktree panel from the commit list or refs panel;
   `Tab` switches back to refs. The panels share the configured refs width.
-- List existing non-bare worktrees with their branch (or detached HEAD) and
-  directory; `*` marks the current worktree, even when launched in a subdirectory.
+- List existing non-bare worktrees by directory name, with the branch (or
+  detached HEAD) and full path on separate lines. `*` marks the current
+  worktree, even when launched in a subdirectory.
 - Navigate with `j` / `k`, arrows, or `g` / `G`, including movement counts.
   `Enter` or `Space` opens the selected worktree and selects its HEAD.
 - Change Serie's repository context and working directory, never the branch
@@ -199,12 +200,6 @@ panel.
 - `R` refreshes both history and worktrees, preserving panel selection by path.
   `c` / `C` copies the selected directory. `w`, `Esc`, or `Backspace` closes
   the picker without changing context.
-
-### Explicit worktree names in the picker — Proposed
-
-- Show each worktree's name prominently in the right-hand pane, separate from
-  its checked-out branch (or detached HEAD).
-- Keep the full path available to distinguish worktrees with the same name.
 
 ### Pull changes into a branch — Proposed
 
