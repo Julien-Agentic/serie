@@ -200,6 +200,20 @@ panel.
   `c` / `C` copies the selected directory. `w`, `Esc`, or `Backspace` closes
   the picker without changing context.
 
+### Explicit worktree names in the picker — Proposed
+
+- Show each worktree's name prominently in the right-hand pane, separate from
+  its checked-out branch (or detached HEAD).
+- Keep the full path available to distinguish worktrees with the same name.
+
+### Pull changes into a branch — Proposed
+
+- Add a configurable keybinding to pull from the checked-out branch's upstream
+  in the active worktree.
+- Use fast-forward only initially. Report a missing upstream or diverged history
+  without switching branches, stashing, or rewriting history. Refresh the graph
+  after a successful pull.
+
 ### Selectable changed-file list inside Serie — Implemented
 
 - In commit details, `Tab` toggles focus between text scrolling and changed files.
@@ -245,12 +259,13 @@ launch.
 - Preserve the unified diff layout for users who prefer it over side-by-side.
 - Keep scrolling correct when one logical line occupies multiple screen rows.
 
-### Automatic refresh for agent activity — Proposed
+### Automatic refresh for agent activity — Implemented
 
-- Detect externally created commits and reference changes.
-- Update the graph without repeatedly pressing `R`.
-- Preserve the selected commit and browsing position where possible, rather than
-  jumping around as agents work.
+- Enable with `[core.option]` and `auto_refresh = true`. Checks Git's HEAD and
+  refs every 10 seconds by default; set `auto_refresh_interval_secs = 5` for
+  faster updates. `R` remains available for immediate refresh.
+- Reload only when a snapshot changes. Preserve the selected commit and its
+  screen row where possible, and defer while a prompt or inline command is open.
 
 ### Safe behavior around active agents — Proposed
 

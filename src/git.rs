@@ -671,6 +671,40 @@ pub fn save_graph_lanes(path: &Path, lanes: Option<usize>) -> std::result::Resul
     }
 }
 
+/// Read Git's ref store without walking history or inspecting the working tree.
+#[derive(Debug, PartialEq, Eq)]
+pub struct RefSnapshot {
+    head_branch: Vec<u8>,
+    refs: Vec<u8>,
+}
+
+impl RefSnapshot {
+    pub fn read(path: &Path) -> Option<Self> {
+        // --head includes the worktree's resolved HEAD, even when detached.
+        // Also read symbolic HEAD to detect checkouts between equal branch tips.
+        Some(Self {
+            refs: read_ref_probe(path, &["show-ref", "--head"])?,
+            head_branch: read_ref_probe(path, &["symbolic-ref", "--quiet", "HEAD"])?,
+        })
+    }
+}
+
+fn read_ref_probe(path: &Path, args: &[&str]) -> Option<Vec<u8>> {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(path)
+        .stdin(Stdio::null())
+        .output()
+        .ok()?;
+    // show-ref uses 1 for no refs; symbolic-ref uses 1 for detached HEAD.
+    // Other failures must not be mistaken for refs disappearing.
+    (output.status.success()
+        || (output.status.code() == Some(1)
+            && output.stdout.is_empty()
+            && output.stderr.is_empty()))
+    .then_some(output.stdout)
+}
+
 fn run_git(path: &Path, args: &[&str]) -> std::result::Result<String, String> {
     run_git_with(path, args, |_| {})
 }
@@ -1255,6 +1289,52 @@ mod tests {
 
     fn current_branch(path: &Path) -> String {
         get_current_branch(path).unwrap()
+    }
+
+    #[test]
+    fn test_ref_snapshot_detects_shared_refs_but_ignores_working_files_and_packing() {
+        let dir = repository_with_topic_branch();
+        let root = dir.path();
+        let worktrees = tempfile::tempdir().unwrap();
+        let worktree = worktrees.path().join("topic");
+        git(
+            root,
+            &["worktree", "add", worktree.to_str().unwrap(), "topic"],
+        );
+
+        let before = RefSnapshot::read(root).unwrap();
+        fs::write(worktree.join("uncommitted.txt"), "ignore me").unwrap();
+        git(root, &["pack-refs", "--all"]);
+        assert_eq!(RefSnapshot::read(root).unwrap(), before);
+
+        GitRepository::new(&worktree).commit("agent commit", "2026-01-03");
+        let after_commit = RefSnapshot::read(root).unwrap();
+        assert_ne!(after_commit, before);
+        git(&worktree, &["tag", "test-tag"]);
+        let after_tag = RefSnapshot::read(root).unwrap();
+        assert_ne!(after_tag, after_commit);
+        git(&worktree, &["tag", "-d", "test-tag"]);
+        assert_eq!(RefSnapshot::read(root).unwrap(), after_commit);
+    }
+
+    #[test]
+    fn test_ref_snapshot_detects_same_commit_head_switches() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let repo = GitRepository::new(root);
+        repo.init();
+        repo.commit("initial", "2026-01-01");
+        git(root, &["branch", "same-tip"]);
+
+        let original = RefSnapshot::read(root).unwrap();
+        git(root, &["switch", "same-tip"]);
+        let switched = RefSnapshot::read(root).unwrap();
+        assert_eq!(original.refs, switched.refs);
+        assert_ne!(original, switched);
+        git(root, &["switch", "--detach", "HEAD"]);
+        let detached = RefSnapshot::read(root).unwrap();
+        assert_eq!(original.refs, detached.refs);
+        assert_ne!(switched, detached);
     }
 
     #[test]

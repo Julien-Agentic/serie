@@ -1,6 +1,11 @@
 # Optional setup for this fork; no absolute paths or personal settings.
 # Try with SERIE_CONFIG_FILE=/absolute/path/to/this/file serie.
 # Merge manually into an existing config rather than overwriting it.
+# Uncomment to refresh automatically after commits and ref changes.
+# [core.option]
+# auto_refresh = true
+# auto_refresh_interval_secs = 10
+
 [ui.list]
 columns = ["graph", "marker", "subject"]
 

@@ -1,6 +1,7 @@
 use std::{
     io::{self, Write},
     rc::Rc,
+    time::Instant,
 };
 
 use ratatui::{
@@ -18,6 +19,7 @@ use ratatui::{
 use rustc_hash::FxHashMap;
 
 use crate::{
+    auto_refresh::RefMonitor,
     color::{ColorTheme, GraphColorSet},
     config::{CoreConfig, CursorType, UiConfig, UserCommand, UserCommandType},
     event::{AppEvent, EventController, UserEvent, UserEventWithCount},
@@ -27,7 +29,7 @@ use crate::{
     },
     git::{
         BranchTarget, BranchesAtCommit, Commit, CommitHash, DeleteBranchError, FileChange, Head,
-        Ref, Repository,
+        Ref, RefSnapshot, Repository,
     },
     graph::{GraphImageManager, GraphWidth},
     keybind::KeyBind,
@@ -67,6 +69,7 @@ pub enum InitialSelection {
 pub enum Ret {
     Quit,
     Refresh(RefreshRequest),
+    AutoRefresh(RefSnapshot, RefreshViewContext),
     OpenWorktree {
         path: std::path::PathBuf,
         context: RefreshViewContext,
@@ -222,6 +225,7 @@ impl App<'_> {
         &mut self,
         terminal: &mut DefaultTerminal,
         refresh_view_context: Option<RefreshViewContext>,
+        mut monitor: Option<&mut RefMonitor>,
     ) -> Result<Ret, std::io::Error> {
         if let Some(context) = refresh_view_context {
             let [view_area, _] = split_app_areas(terminal.size()?.into());
@@ -236,7 +240,17 @@ impl App<'_> {
             // Keep image deletion, uploads, and text updates in the same frame.
             // Preparation and event handling stay outside the synchronized update.
             io::stdout().sync_update(|_| self.draw(terminal))??;
-            match self.ec.recv() {
+            match self.ec.recv_with_background(|| {
+                let monitor = monitor.as_deref_mut()?;
+                monitor.tick(Instant::now());
+                if !monitor.has_change() {
+                    return None;
+                }
+                let context = self.auto_refresh_context()?;
+                monitor
+                    .take_change()
+                    .map(|snapshot| AppEvent::AutoRefresh(snapshot, context))
+            }) {
                 AppEvent::Key(key) => {
                     if let Some(pending) = self.app_status.pending_prompt.take() {
                         self.clear_status_line();
@@ -344,11 +358,7 @@ impl App<'_> {
                     let context = match &self.view {
                         View::Worktrees(view) => Some(view.refresh_context()),
                         View::Refs(view) => Some(view.refresh_context()),
-                        View::List(view) => Some(RefreshViewContext::List {
-                            list_context: crate::view::ListRefreshViewContext::from(
-                                view.as_list_state(),
-                            ),
-                        }),
+                        View::List(view) => Some(view.refresh_context()),
                         _ => None,
                     };
                     if let Some(context) = context {
@@ -393,6 +403,10 @@ impl App<'_> {
                 }
                 AppEvent::CopyToClipboard { name, value } => {
                     self.copy_to_clipboard(name, value);
+                }
+                AppEvent::AutoRefresh(snapshot, context) => {
+                    self.cleanup_graph_images()?;
+                    return Ok(Ret::AutoRefresh(snapshot, context));
                 }
                 AppEvent::Refresh(context) => {
                     self.cleanup_graph_images()?;
@@ -439,6 +453,16 @@ impl App<'_> {
                 }
             }
         }
+    }
+
+    fn auto_refresh_context(&self) -> Option<RefreshViewContext> {
+        if self.app_status.pending_prompt.is_some()
+            || !self.app_status.numeric_prefix.is_empty()
+            || matches!(self.app_status.status_line, StatusLine::Input { .. })
+        {
+            return None;
+        }
+        self.view.auto_refresh_context()
     }
 
     fn prepare_render(&mut self, terminal: &mut DefaultTerminal) -> Result<(), std::io::Error> {
@@ -1539,6 +1563,40 @@ mod tests {
             &ec,
         );
         f(&mut app);
+    }
+
+    #[test]
+    fn test_auto_refresh_preserves_top_commit_and_waits_for_interactions() {
+        with_deletion_app(|app| {
+            app.view.update_layout(Rect::new(0, 0, 100, 20));
+            let context = app.auto_refresh_context().unwrap();
+            assert!(!context.list_context().scroll_to_top);
+            let View::List(view) = &mut app.view else {
+                panic!("expected commit list");
+            };
+            let previous = view.as_list_state().selected_commit_hash().clone();
+            view.handle_event(
+                UserEventWithCount::from_event(UserEvent::NavigateDown),
+                KeyEvent::from(KeyCode::Down),
+            );
+            assert_ne!(view.as_list_state().selected_commit_hash(), &previous);
+            view.reset_commit_list_with(context.list_context());
+            assert_eq!(view.as_list_state().selected_commit_hash(), &previous);
+
+            app.app_status.pending_prompt = Some(PendingPrompt::ChooseBranchNameToCopy(vec![]));
+            assert!(app.auto_refresh_context().is_none());
+            app.app_status.pending_prompt = None;
+            app.app_status.numeric_prefix = "2".into();
+            assert!(app.auto_refresh_context().is_none());
+            app.app_status.numeric_prefix.clear();
+            app.update_status_input("search".into(), 0, String::new());
+            assert!(app.auto_refresh_context().is_none());
+            app.clear_status_line();
+            app.open_help();
+            assert!(app.auto_refresh_context().is_none());
+            app.close_help();
+            assert!(app.auto_refresh_context().is_some());
+        });
     }
 
     #[test]
